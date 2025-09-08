@@ -34,6 +34,22 @@ export OLLAMA_MODEL="llama2"
 export OLLAMA_HOST="http://localhost:11434"
 ```
 
+## Running the Server
+
+With the environment variables above set, start the FastAPI server using
+
+```bash
+uvicorn server:app --reload
+```
+
+Then send chat messages with ``curl``:
+
+```bash
+curl -X POST http://localhost:8000/chat \
+     -H 'Content-Type: application/json' \
+     -d '{"message": "Hello"}'
+```
+
 ## Example Conversation
 
 ```text
