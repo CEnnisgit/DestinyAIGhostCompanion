@@ -166,47 +166,78 @@ def test_authenticated_post_includes_header():
         client._post("/foo")
 
 
-def test_search_destiny_player_path():
-    with patch.object(BungieClient, "_get", return_value={}) as mock_get:
+def test_search_destiny_player_success():
+    data = {"ErrorCode": 1, "Response": []}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
         client = BungieClient("key")
-        client.search_destiny_player(1, "Foo")
-        mock_get.assert_called_once_with("/Destiny2/SearchDestinyPlayer/1/Foo/")
+        result = client.search_destiny_player(1, "Foo")
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/SearchDestinyPlayer/1/Foo/", params=None
+        )
 
 
 def test_search_destiny_player_error():
-    with patch.object(BungieClient, "_get", side_effect=BungieAPIError("bad")):
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
         client = BungieClient("key")
         with pytest.raises(BungieAPIError):
             client.search_destiny_player(1, "Foo")
-
-
-def test_get_profile_path():
-    with patch.object(BungieClient, "_get", return_value={}) as mock_get:
-        client = BungieClient("key")
-        client.get_profile(1, "123", "100")
         mock_get.assert_called_once_with(
-            "/Destiny2/1/Profile/123/", {"components": "100"}
+            f"{BASE_URL}/Destiny2/SearchDestinyPlayer/1/Foo/", params=None
+        )
+
+
+def test_get_profile_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.get_profile(1, "123", "100")
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/", params={"components": "100"}
         )
 
 
 def test_get_profile_error():
-    with patch.object(BungieClient, "_get", side_effect=BungieAPIError("bad")):
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
         client = BungieClient("key")
         with pytest.raises(BungieAPIError):
             client.get_profile(1, "123", "100")
-
-
-def test_get_character_path():
-    with patch.object(BungieClient, "_get", return_value={}) as mock_get:
-        client = BungieClient("key")
-        client.get_character(1, "123", "456", "200")
         mock_get.assert_called_once_with(
-            "/Destiny2/1/Profile/123/Character/456/", {"components": "200"}
+            f"{BASE_URL}/Destiny2/1/Profile/123/", params={"components": "100"}
+        )
+
+
+def test_get_character_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.get_character(1, "123", "456", "200")
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/",
+            params={"components": "200"},
         )
 
 
 def test_get_character_error():
-    with patch.object(BungieClient, "_get", side_effect=BungieAPIError("bad")):
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
         client = BungieClient("key")
         with pytest.raises(BungieAPIError):
             client.get_character(1, "123", "456", "200")
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/",
+            params={"components": "200"},
+        )
