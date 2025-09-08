@@ -132,6 +132,40 @@ def test_post_sends_payload_and_headers():
         )
 
 
+def test_init_sets_authorization_header():
+    client = BungieClient("key", access_token="abc")
+    assert client.session.headers["Authorization"] == "Bearer abc"
+
+
+def test_set_and_refresh_access_token():
+    client = BungieClient("key")
+    client.set_access_token("tok1")
+    assert client.session.headers["Authorization"] == "Bearer tok1"
+    client.refresh_access_token("tok2")
+    assert client.session.headers["Authorization"] == "Bearer tok2"
+
+
+def test_authenticated_get_includes_header():
+    def fake_get(self, url, params=None, **kwargs):
+        assert self.headers["Authorization"] == "Bearer tok"
+        return make_response({"ErrorCode": 1})
+
+    with patch("ghost.bungie.requests.Session.get", new=fake_get):
+        client = BungieClient("key", access_token="tok")
+        client._get("/foo")
+
+
+def test_authenticated_post_includes_header():
+    def fake_post(self, url, json=None, headers=None, **kwargs):
+        assert self.headers["Authorization"] == "Bearer tok"
+        return make_response({"ErrorCode": 1})
+
+    with patch("ghost.bungie.requests.Session.post", new=fake_post):
+        client = BungieClient("key")
+        client.set_access_token("tok")
+        client._post("/foo")
+
+
 def test_search_destiny_player_path():
     with patch.object(BungieClient, "_get", return_value={}) as mock_get:
         client = BungieClient("key")
