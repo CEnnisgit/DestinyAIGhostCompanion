@@ -73,3 +73,49 @@ def test_get_raises_on_invalid_json():
         client = BungieClient("key")
         with pytest.raises(BungieAPIError):
             client._get("/foo")
+
+
+def test_search_destiny_player_path():
+    with patch.object(BungieClient, "_get", return_value={}) as mock_get:
+        client = BungieClient("key")
+        client.search_destiny_player(1, "Foo")
+        mock_get.assert_called_once_with("/Destiny2/SearchDestinyPlayer/1/Foo/")
+
+
+def test_search_destiny_player_error():
+    with patch.object(BungieClient, "_get", side_effect=BungieAPIError("bad")):
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.search_destiny_player(1, "Foo")
+
+
+def test_get_profile_path():
+    with patch.object(BungieClient, "_get", return_value={}) as mock_get:
+        client = BungieClient("key")
+        client.get_profile(1, "123", "100")
+        mock_get.assert_called_once_with(
+            "/Destiny2/1/Profile/123/", {"components": "100"}
+        )
+
+
+def test_get_profile_error():
+    with patch.object(BungieClient, "_get", side_effect=BungieAPIError("bad")):
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.get_profile(1, "123", "100")
+
+
+def test_get_character_path():
+    with patch.object(BungieClient, "_get", return_value={}) as mock_get:
+        client = BungieClient("key")
+        client.get_character(1, "123", "456", "200")
+        mock_get.assert_called_once_with(
+            "/Destiny2/1/Profile/123/Character/456/", {"components": "200"}
+        )
+
+
+def test_get_character_error():
+    with patch.object(BungieClient, "_get", side_effect=BungieAPIError("bad")):
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.get_character(1, "123", "456", "200")
