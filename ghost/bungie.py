@@ -83,3 +83,46 @@ class BungieClient:
             message = data.get("Message", "Bungie API error")
             raise BungieAPIError(message)
         return data
+
+    # Public API methods -------------------------------------------------
+
+    def search_destiny_player(
+        self, membership_type: int | str, display_name: str
+    ) -> Dict[str, Any]:
+        """Search for a Destiny player by membership type and display name."""
+
+        path = f"/Destiny2/SearchDestinyPlayer/{membership_type}/{display_name}/"
+        return self._get(path)
+
+    def get_profile(
+        self,
+        membership_type: int | str,
+        destiny_membership_id: str,
+        components: str,
+    ) -> Dict[str, Any]:
+        """Retrieve a Destiny profile for ``destiny_membership_id``.
+
+        ``components`` is a comma separated list of component codes as strings
+        defined by Bungie's API. It is passed directly to the underlying
+        request.
+        """
+
+        path = f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
+        params = {"components": components}
+        return self._get(path, params)
+
+    def get_character(
+        self,
+        membership_type: int | str,
+        destiny_membership_id: str,
+        character_id: str,
+        components: str,
+    ) -> Dict[str, Any]:
+        """Retrieve a character for a Destiny profile."""
+
+        path = (
+            f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
+            f"Character/{character_id}/"
+        )
+        params = {"components": components}
+        return self._get(path, params)
