@@ -28,9 +28,12 @@ class BungieClient:
     ----------
     api_key:
         A valid Bungie API key obtained from Bungie.net.
+    access_token:
+        Optional OAuth access token to be included in requests. If provided,
+        an ``Authorization`` header will be added using the ``Bearer`` scheme.
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, access_token: str | None = None) -> None:
         """Initialize a client with authentication and headers.
 
         The ``User-Agent`` header follows Bungie's recommended format
@@ -48,6 +51,27 @@ class BungieClient:
         version = os.getenv("BUNGIE_APP_VERSION", "0")
         url = os.getenv("BUNGIE_APP_URL", "https://example.com")
         self.session.headers["User-Agent"] = f"{app_name}/{version} (+{url})"
+
+        self.access_token: str | None = None
+        if access_token is not None:
+            self.set_access_token(access_token)
+
+    # ------------------------------------------------------------------
+    # Token handling ---------------------------------------------------
+    def set_access_token(self, access_token: str) -> None:
+        """Set or update the OAuth access token for authenticated requests."""
+
+        self.access_token = access_token
+        self.session.headers["Authorization"] = f"Bearer {access_token}"
+
+    def refresh_access_token(self, access_token: str) -> None:
+        """Refresh the OAuth access token.
+
+        This is a convenience wrapper around :meth:`set_access_token` to make
+        the intent explicit for callers when rotating tokens.
+        """
+
+        self.set_access_token(access_token)
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Perform a GET request to ``path`` and return the JSON payload.
