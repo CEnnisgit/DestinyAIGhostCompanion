@@ -84,6 +84,43 @@ class BungieClient:
             raise BungieAPIError(message)
         return data
 
+    def _post(
+        self,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Perform a POST request to ``path`` and return the JSON payload."""
+
+        resp = self.session.post(
+            f"{BASE_URL}{path}", json=payload, headers=headers
+        )
+
+        if resp.status_code != 200:
+            raise BungieAPIError(f"HTTP error {resp.status_code}")
+
+        retry_after = resp.headers.get("Retry-After")
+        if retry_after:
+            try:
+                time.sleep(int(retry_after))
+            except ValueError:
+                pass
+
+        if resp.headers.get("X-RateLimit-Remaining") == "0":
+            raise BungieAPIError(
+                "Bungie API rate limit exceeded. Please slow down your requests."
+            )
+
+        try:
+            data = resp.json()
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise BungieAPIError("Invalid JSON response from Bungie API") from exc
+
+        if data.get("ErrorCode") != 1:
+            message = data.get("Message", "Bungie API error")
+            raise BungieAPIError(message)
+        return data
+
     # Public API methods -------------------------------------------------
 
     def search_destiny_player(

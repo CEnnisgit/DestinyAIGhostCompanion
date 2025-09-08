@@ -3,7 +3,7 @@ from unittest.mock import patch, Mock
 
 import pytest
 
-from ghost.bungie import BungieClient, BungieAPIError
+from ghost.bungie import BungieClient, BungieAPIError, BASE_URL
 
 
 def make_response(
@@ -73,6 +73,63 @@ def test_get_raises_on_invalid_json():
         client = BungieClient("key")
         with pytest.raises(BungieAPIError):
             client._get("/foo")
+
+
+def test_post_raises_on_error_code():
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response({"ErrorCode": 2, "Message": "Bad"})
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client._post("/foo")
+
+
+def test_post_raises_on_rate_limit():
+    headers = {"X-RateLimit-Remaining": "0"}
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response({"ErrorCode": 1}, headers)
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client._post("/foo")
+
+
+def test_post_sleeps_when_retry_after():
+    headers = {"Retry-After": "5"}
+    with patch("ghost.bungie.requests.Session.post") as mock_post, patch(
+        "ghost.bungie.time.sleep"
+    ) as mock_sleep:
+        mock_post.return_value = make_response({"ErrorCode": 1}, headers)
+        client = BungieClient("key")
+        result = client._post("/foo")
+        mock_sleep.assert_called_once_with(5)
+        assert result["ErrorCode"] == 1
+
+
+def test_post_raises_on_http_error():
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response({}, status_code=503)
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client._post("/foo")
+
+
+def test_post_raises_on_invalid_json():
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response({}, json_exc=ValueError("boom"))
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client._post("/foo")
+
+
+def test_post_sends_payload_and_headers():
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response({"ErrorCode": 1})
+        client = BungieClient("key")
+        payload = {"a": 1}
+        headers = {"X-Test": "1"}
+        client._post("/foo", payload, headers)
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/foo", json=payload, headers=headers
+        )
 
 
 def test_search_destiny_player_path():
