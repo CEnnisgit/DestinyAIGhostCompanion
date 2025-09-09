@@ -407,3 +407,294 @@ def test_get_collectibles_error():
             f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Collectibles/",
             params={"components": "800"},
         )
+
+
+def test_transfer_item_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+        "itemReferenceHash": 789,
+        "stackSize": 2,
+        "transferToVault": True,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.transfer_item(1, "123", "456", 789, 2, True)
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/TransferItem/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_transfer_item_error():
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+        "itemReferenceHash": 789,
+        "stackSize": 2,
+        "transferToVault": True,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.transfer_item(1, "123", "456", 789, 2, True)
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/TransferItem/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_pull_from_postmaster_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+        "itemReferenceHash": 789,
+        "stackSize": 2,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.pull_from_postmaster(1, "123", "456", 789, 2)
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/PullFromPostmaster/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_pull_from_postmaster_error():
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+        "itemReferenceHash": 789,
+        "stackSize": 2,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.pull_from_postmaster(1, "123", "456", 789, 2)
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/PullFromPostmaster/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_equip_item_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.equip_item(1, "123", "456")
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/EquipItem/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_equip_item_error():
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.equip_item(1, "123", "456")
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/EquipItem/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_equip_items_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemIds": ["1", "2"],
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.equip_items(1, "123", ["1", "2"])
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/EquipItems/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_equip_items_error():
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemIds": ["1", "2"],
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.equip_items(1, "123", ["1", "2"])
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/EquipItems/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_equip_loadout_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "loadoutIndex": 0,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.equip_loadout(1, "123", 0)
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Loadouts/EquipLoadout/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_equip_loadout_error():
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "loadoutIndex": 0,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.equip_loadout(1, "123", 0)
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Loadouts/EquipLoadout/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_snapshot_loadout_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "loadoutIndex": 0,
+        "nameHash": 1,
+        "iconHash": 2,
+        "colorHash": 3,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.snapshot_loadout(1, "123", 0, 1, 2, 3)
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Loadouts/SnapshotLoadout/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_snapshot_loadout_error():
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "loadoutIndex": 0,
+        "nameHash": 1,
+        "iconHash": 2,
+        "colorHash": 3,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.snapshot_loadout(1, "123", 0, 1, 2, 3)
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Loadouts/SnapshotLoadout/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_set_lock_state_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+        "state": True,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.set_lock_state(1, "123", "456", True)
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/SetLockState/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_set_lock_state_error():
+    payload = {
+        "membershipType": 1,
+        "characterId": "123",
+        "itemId": "456",
+        "state": True,
+    }
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.set_lock_state(1, "123", "456", True)
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/Actions/Items/SetLockState/",
+            json=payload,
+            headers=None,
+        )

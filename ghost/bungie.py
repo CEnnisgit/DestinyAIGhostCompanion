@@ -242,6 +242,140 @@ class BungieClient:
         params = {"components": components}
         return self._get(path, params)
 
+    # Item and loadout actions -----------------------------------------
+    def transfer_item(
+        self,
+        membership_type: int | str,
+        character_id: str,
+        item_id: str,
+        item_reference_hash: int | str,
+        stack_size: int = 1,
+        transfer_to_vault: bool = False,
+    ) -> Dict[str, Any]:
+        """Transfer an item to a character or the vault."""
+
+        path = "/Destiny2/Actions/Items/TransferItem/"
+        payload = {
+            "membershipType": membership_type,
+            "characterId": character_id,
+            "itemId": item_id,
+            "itemReferenceHash": item_reference_hash,
+            "stackSize": stack_size,
+            "transferToVault": transfer_to_vault,
+        }
+        return self._post(path, payload)
+
+    def pull_from_postmaster(
+        self,
+        membership_type: int | str,
+        character_id: str,
+        item_id: str,
+        item_reference_hash: int | str,
+        stack_size: int = 1,
+    ) -> Dict[str, Any]:
+        """Pull an item from the postmaster to a character."""
+
+        path = "/Destiny2/Actions/Items/PullFromPostmaster/"
+        payload = {
+            "membershipType": membership_type,
+            "characterId": character_id,
+            "itemId": item_id,
+            "itemReferenceHash": item_reference_hash,
+            "stackSize": stack_size,
+        }
+        return self._post(path, payload)
+
+    def equip_item(
+        self,
+        membership_type: int | str,
+        character_id: str,
+        item_id: str,
+    ) -> Dict[str, Any]:
+        """Equip a single item on a character."""
+
+        path = "/Destiny2/Actions/Items/EquipItem/"
+        payload = {
+            "membershipType": membership_type,
+            "characterId": character_id,
+            "itemId": item_id,
+        }
+        return self._post(path, payload)
+
+    def equip_items(
+        self,
+        membership_type: int | str,
+        character_id: str,
+        item_ids: list[str | int],
+    ) -> Dict[str, Any]:
+        """Equip multiple items on a character."""
+
+        path = "/Destiny2/Actions/Items/EquipItems/"
+        payload = {
+            "membershipType": membership_type,
+            "characterId": character_id,
+            "itemIds": item_ids,
+        }
+        return self._post(path, payload)
+
+    def equip_loadout(
+        self,
+        membership_type: int | str,
+        character_id: str,
+        loadout_index: int,
+    ) -> Dict[str, Any]:
+        """Equip a loadout by index."""
+
+        path = "/Destiny2/Actions/Loadouts/EquipLoadout/"
+        payload = {
+            "membershipType": membership_type,
+            "characterId": character_id,
+            "loadoutIndex": loadout_index,
+        }
+        return self._post(path, payload)
+
+    def snapshot_loadout(
+        self,
+        membership_type: int | str,
+        character_id: str,
+        loadout_index: int,
+        name_hash: int | None = None,
+        icon_hash: int | None = None,
+        color_hash: int | None = None,
+    ) -> Dict[str, Any]:
+        """Snapshot a loadout with the currently equipped items."""
+
+        path = "/Destiny2/Actions/Loadouts/SnapshotLoadout/"
+        payload: Dict[str, Any] = {
+            "membershipType": membership_type,
+            "characterId": character_id,
+            "loadoutIndex": loadout_index,
+        }
+        if name_hash is not None:
+            payload["nameHash"] = name_hash
+        if icon_hash is not None:
+            payload["iconHash"] = icon_hash
+        if color_hash is not None:
+            payload["colorHash"] = color_hash
+        return self._post(path, payload)
+
+    def set_lock_state(
+        self,
+        membership_type: int | str,
+        character_id: str,
+        item_id: str,
+        state: bool,
+    ) -> Dict[str, Any]:
+        """Set the lock state for an item instance."""
+
+        path = "/Destiny2/Actions/Items/SetLockState/"
+        payload = {
+            "membershipType": membership_type,
+            "characterId": character_id,
+            "itemId": item_id,
+            "state": state,
+        }
+        return self._post(path, payload)
+
     def get_item(
         self,
         membership_type: int | str,
