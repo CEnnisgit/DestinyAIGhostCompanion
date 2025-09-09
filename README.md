@@ -2,6 +2,7 @@
 The AI Ghost Companion is a minimalist chat-based assistant for Destiny 2. It combines the Bungie.net API with an AI language model to answer questions in real time about quests, activities, vendors, lore, and even manage your Guardian’s gear—all through a simple conversational interface.
 
 ## Quick Start
+**Note:** Set the `BUNGIE_API_KEY` environment variable before running the examples below.
 ```python
 from ghost.assistant import GhostAssistant
 
@@ -63,6 +64,12 @@ specified by `GHOST_TOKEN_FILE`). The encryption key is derived from the
 
 ## Environment Variables
 Fill in the `.env` file with your own values for the variables below, or export them directly:
+
+```dotenv
+# .env
+BUNGIE_API_KEY=your_api_key
+```
+
 ```bash
 export BUNGIE_API_KEY="your_api_key"
 export BUNGIE_CLIENT_ID="your_oauth_client_id"
