@@ -241,3 +241,169 @@ def test_get_character_error():
             f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/",
             params={"components": "200"},
         )
+
+
+def test_search_player_by_name_success():
+    data = {"ErrorCode": 1, "Response": []}
+    payload = {"displayName": "Foo", "displayNameCode": 42}
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.search_player_by_name(1, "Foo", 42)
+        assert result == data
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/SearchDestinyPlayerByBungieName/1/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_search_player_by_name_error():
+    payload = {"displayName": "Foo", "displayNameCode": 42}
+    with patch("ghost.bungie.requests.Session.post") as mock_post:
+        mock_post.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.search_player_by_name(1, "Foo", 42)
+        mock_post.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/SearchDestinyPlayerByBungieName/1/",
+            json=payload,
+            headers=None,
+        )
+
+
+def test_get_linked_profiles_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.get_linked_profiles(1, "123", True)
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/LinkedProfiles/",
+            params={"getAllMemberships": True},
+        )
+
+
+def test_get_linked_profiles_error():
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.get_linked_profiles(1, "123", True)
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/LinkedProfiles/",
+            params={"getAllMemberships": True},
+        )
+
+
+def test_get_item_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.get_item(1, "123", "456", "300")
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Item/456/",
+            params={"components": "300"},
+        )
+
+
+def test_get_item_error():
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.get_item(1, "123", "456", "300")
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Item/456/",
+            params={"components": "300"},
+        )
+
+
+def test_get_character_vendors_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.get_character_vendors(1, "123", "456", "400")
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Vendors/",
+            params={"components": "400"},
+        )
+
+
+def test_get_character_vendors_error():
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.get_character_vendors(1, "123", "456", "400")
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Vendors/",
+            params={"components": "400"},
+        )
+
+
+def test_get_vendor_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.get_vendor(1, "123", "456", "789", "400")
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Vendors/789/",
+            params={"components": "400"},
+        )
+
+
+def test_get_vendor_error():
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.get_vendor(1, "123", "456", "789", "400")
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Vendors/789/",
+            params={"components": "400"},
+        )
+
+
+def test_get_collectibles_success():
+    data = {"ErrorCode": 1, "Response": {}}
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(data)
+        client = BungieClient("key")
+        result = client.get_collectibles(1, "123", "456", "800")
+        assert result == data
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Collectibles/",
+            params={"components": "800"},
+        )
+
+
+def test_get_collectibles_error():
+    with patch("ghost.bungie.requests.Session.get") as mock_get:
+        mock_get.return_value = make_response(
+            {"ErrorCode": 2, "Message": "Bad"}
+        )
+        client = BungieClient("key")
+        with pytest.raises(BungieAPIError):
+            client.get_collectibles(1, "123", "456", "800")
+        mock_get.assert_called_once_with(
+            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Collectibles/",
+            params={"components": "800"},
+        )
