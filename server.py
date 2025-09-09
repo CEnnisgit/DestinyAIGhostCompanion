@@ -1,14 +1,16 @@
-"""FastAPI server exposing a simple chat endpoint backed by Ollama."""
+"""FastAPI server exposing a chat endpoint orchestrated by ``GhostAssistant``."""
 
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from ghost.ollama import OllamaClient, OllamaError
+from ghost.assistant import GhostAssistant
+from ghost.ollama import OllamaError
+from ghost.bungie import BungieAPIError
 
 app = FastAPI()
-client = OllamaClient()
+assistant = GhostAssistant()
 
 
 class ChatRequest(BaseModel):
@@ -18,7 +20,7 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 def chat(req: ChatRequest) -> dict[str, str]:
     try:
-        reply = client.generate(req.message)
-    except OllamaError as exc:  # pragma: no cover - simple wrapper
+        reply = assistant.chat(req.message)
+    except (OllamaError, BungieAPIError) as exc:  # pragma: no cover - simple wrapper
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"reply": reply}
