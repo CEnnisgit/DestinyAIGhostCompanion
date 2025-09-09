@@ -25,6 +25,11 @@ class BungieAPIError(Exception):
 class BungieClient:
     """Client for performing requests against the Bungie API.
 
+    The constructor requires an API key. When used through
+    :class:`GhostAssistant`, the key is automatically read from the
+    ``BUNGIE_API_KEY`` environment variable unless a client is provided
+    explicitly.
+
     Parameters
     ----------
     api_key:
