@@ -133,9 +133,10 @@ class BungieClient:
         except ValueError as exc:  # pragma: no cover - defensive
             raise BungieAPIError("Invalid JSON response from Bungie API") from exc
 
-        if data.get("ErrorCode") != 1:
+        error_code = data.get("ErrorCode")
+        if error_code != 1:
             message = data.get("Message", "Bungie API error")
-            raise BungieAPIError(message)
+            raise BungieAPIError(f"{message} (ErrorCode: {error_code})")
         return data
 
     def _post(
@@ -185,6 +186,15 @@ class BungieClient:
         path = f"/Destiny2/SearchDestinyPlayer/{membership_type}/{display_name}/"
         return self._get(path)
 
+    def search_player_by_name(
+        self, membership_type: int | str, display_name: str, display_code: int
+    ) -> Dict[str, Any]:
+        """Search for a player by Bungie name and code."""
+
+        path = f"/Destiny2/SearchDestinyPlayerByBungieName/{membership_type}/"
+        payload = {"displayName": display_name, "displayNameCode": display_code}
+        return self._post(path, payload)
+
     def get_profile(
         self,
         membership_type: int | str,
@@ -202,6 +212,20 @@ class BungieClient:
         params = {"components": components}
         return self._get(path, params)
 
+    def get_linked_profiles(
+        self,
+        membership_type: int | str,
+        destiny_membership_id: str,
+        get_all_memberships: bool = False,
+    ) -> Dict[str, Any]:
+        """Retrieve linked profiles for the given membership."""
+
+        path = (
+            f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/LinkedProfiles/"
+        )
+        params = {"getAllMemberships": get_all_memberships}
+        return self._get(path, params)
+
     def get_character(
         self,
         membership_type: int | str,
@@ -214,6 +238,71 @@ class BungieClient:
         path = (
             f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
             f"Character/{character_id}/"
+        )
+        params = {"components": components}
+        return self._get(path, params)
+
+    def get_item(
+        self,
+        membership_type: int | str,
+        destiny_membership_id: str,
+        item_instance_id: str,
+        components: str,
+    ) -> Dict[str, Any]:
+        """Retrieve a Destiny item instance."""
+
+        path = (
+            f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
+            f"Item/{item_instance_id}/"
+        )
+        params = {"components": components}
+        return self._get(path, params)
+
+    def get_character_vendors(
+        self,
+        membership_type: int | str,
+        destiny_membership_id: str,
+        character_id: str,
+        components: str,
+    ) -> Dict[str, Any]:
+        """Retrieve vendor data for a character."""
+
+        path = (
+            f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
+            f"Character/{character_id}/Vendors/"
+        )
+        params = {"components": components}
+        return self._get(path, params)
+
+    def get_vendor(
+        self,
+        membership_type: int | str,
+        destiny_membership_id: str,
+        character_id: str,
+        vendor_hash: str,
+        components: str,
+    ) -> Dict[str, Any]:
+        """Retrieve a specific vendor for a character."""
+
+        path = (
+            f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
+            f"Character/{character_id}/Vendors/{vendor_hash}/"
+        )
+        params = {"components": components}
+        return self._get(path, params)
+
+    def get_collectibles(
+        self,
+        membership_type: int | str,
+        destiny_membership_id: str,
+        character_id: str,
+        components: str,
+    ) -> Dict[str, Any]:
+        """Retrieve collectible status for a character."""
+
+        path = (
+            f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
+            f"Character/{character_id}/Collectibles/"
         )
         params = {"components": components}
         return self._get(path, params)
