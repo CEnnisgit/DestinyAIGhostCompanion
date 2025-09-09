@@ -25,6 +25,18 @@ class GhostAssistant:
         ollama_client: OllamaClient | None = None,
         api_key: str | None = None,
     ) -> None:
+        """Create a new assistant instance.
+
+        Parameters
+        ----------
+        bungie_client:
+            Optional preconfigured :class:`BungieClient` instance.
+        ollama_client:
+            Optional client used for language model interactions.
+        api_key:
+            If ``None``, the key is read from the ``BUNGIE_API_KEY`` environment
+            variable.
+        """
         if bungie_client is None:
             key = api_key or os.getenv("BUNGIE_API_KEY", "")
             bungie_client = BungieClient(key)
