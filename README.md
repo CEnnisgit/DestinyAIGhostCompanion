@@ -39,17 +39,27 @@ ollama serve
 import os
 from ghost import auth
 
-url = auth.get_authorization_url(os.environ["BUNGIE_CLIENT_ID"], scopes=["ReadDestinyInventoryAndVault"])
+url = auth.get_authorization_url(
+    os.environ["BUNGIE_CLIENT_ID"], scopes=["ReadDestinyInventoryAndVault"]
+)
 print("Visit:", url)
 code = input("Paste authorization code: ")
-tokens = auth.exchange_code_for_token(os.environ["BUNGIE_CLIENT_ID"], os.environ["BUNGIE_CLIENT_SECRET"], code)
+tokens = auth.exchange_code_for_token(
+    os.environ["BUNGIE_CLIENT_ID"], os.environ["BUNGIE_CLIENT_SECRET"], code
+)
+auth.save_tokens(tokens)  # encrypted storage
 ```
 4. Provide the tokens to `BungieClient` or `GhostAssistant`:
 ```python
 from ghost.bungie import BungieClient
+
 client = BungieClient(os.environ["BUNGIE_API_KEY"])
-client.authenticate_user(tokens)
+client.authenticate_user(auth.load_tokens())
 ```
+
+Tokens are stored encrypted on disk at `~/.ghost_tokens` (or the path
+specified by `GHOST_TOKEN_FILE`). The encryption key is derived from the
+`GHOST_TOKEN_KEY` environment variable.
 
 ## Environment Variables
 Export the variables required for Ghost-Companion and Ollama:
@@ -64,6 +74,8 @@ export BUNGIE_APP_VERSION="1.0"
 export BUNGIE_APP_URL="https://example.com"
 export OLLAMA_MODEL="llama2"
 export OLLAMA_HOST="http://localhost:11434"
+export GHOST_TOKEN_KEY="change_me"       # key for encrypted token storage
+# export GHOST_TOKEN_FILE="/tmp/tokens"   # optional custom path
 ```
 
 ## Running the Server
