@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import time
+import threading
 from typing import Optional, Dict, Any
 
 import requests
@@ -41,6 +42,9 @@ class BungieClient:
         api_key: str,
         access_token: str | None = None,
         refresh_token: str | None = None,
+        *,
+        manifest_ttl: int = 3600,
+        profile_ttl: int = 60,
     ) -> None:
         """Initialize a client with authentication and headers.
 
@@ -62,11 +66,22 @@ class BungieClient:
 
         self.access_token: str | None = None
         self.refresh_token: str | None = refresh_token
-        # Manifest caching -------------------------------------------------
-        # ``_manifest`` stores the result of ``get_manifest`` so subsequent
-        # calls do not hit the network again. ``_entity_cache`` keeps a mapping
-        # of entity type -> hash -> response for ``get_entity`` lookups.
-        self._manifest: Dict[str, Any] | None = None
+        # Throttling -------------------------------------------------------
+        # ``_next_request`` tracks when the next request may be made according
+        # to ``Retry-After`` headers. A simple ``Lock`` is used to queue
+        # concurrent calls so only one request is in flight at a time.
+        self._throttle_lock = threading.Lock()
+        self._next_request: float = 0.0
+
+        # Caching ----------------------------------------------------------
+        self.manifest_ttl = manifest_ttl
+        self.profile_ttl = profile_ttl
+        # ``_manifest_cache`` stores (data, expiry)
+        self._manifest_cache: tuple[Dict[str, Any], float] | None = None
+        # ``_profile_cache`` maps request parameters to (data, expiry)
+        self._profile_cache: Dict[tuple[str, str, str], tuple[Dict[str, Any], float]] = {}
+        # ``_entity_cache`` keeps a mapping of entity type -> hash -> response
+        # for ``get_entity`` lookups.
         self._entity_cache: Dict[str, Dict[str, Any]] = {}
         if access_token is not None:
             self.set_access_token(access_token)
@@ -106,22 +121,30 @@ class BungieClient:
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Perform a GET request to ``path`` and return the JSON payload.
 
-        This helper enforces Bungie's throttling recommendations, raising
-        :class:`BungieAPIError` when rate limits are exceeded or when the API
-        returns a non-success ``ErrorCode``.
+        A simple throttle controller ensures that requests respecting
+        ``Retry-After`` headers are spaced out and that concurrent calls are
+        queued. Rate limit headers still result in :class:`BungieAPIError`.
         """
 
-        resp = self.session.get(f"{BASE_URL}{path}", params=params)
+        with self._throttle_lock:
+            now = time.time()
+            wait = self._next_request - now
+            if wait > 0:
+                time.sleep(wait)
+
+            resp = self.session.get(f"{BASE_URL}{path}", params=params)
+
+            retry_after = resp.headers.get("Retry-After")
+            delay = 0
+            if retry_after:
+                try:
+                    delay = int(retry_after)
+                except ValueError:
+                    delay = 0
+            self._next_request = max(self._next_request, time.time() + delay)
 
         if resp.status_code != 200:
             raise BungieAPIError(f"HTTP error {resp.status_code}")
-
-        retry_after = resp.headers.get("Retry-After")
-        if retry_after:
-            try:
-                time.sleep(int(retry_after))
-            except ValueError:
-                pass
 
         if resp.headers.get("X-RateLimit-Remaining") == "0":
             raise BungieAPIError(
@@ -147,19 +170,27 @@ class BungieClient:
     ) -> Dict[str, Any]:
         """Perform a POST request to ``path`` and return the JSON payload."""
 
-        resp = self.session.post(
-            f"{BASE_URL}{path}", json=payload, headers=headers
-        )
+        with self._throttle_lock:
+            now = time.time()
+            wait = self._next_request - now
+            if wait > 0:
+                time.sleep(wait)
+
+            resp = self.session.post(
+                f"{BASE_URL}{path}", json=payload, headers=headers
+            )
+
+            retry_after = resp.headers.get("Retry-After")
+            delay = 0
+            if retry_after:
+                try:
+                    delay = int(retry_after)
+                except ValueError:
+                    delay = 0
+            self._next_request = max(self._next_request, time.time() + delay)
 
         if resp.status_code != 200:
             raise BungieAPIError(f"HTTP error {resp.status_code}")
-
-        retry_after = resp.headers.get("Retry-After")
-        if retry_after:
-            try:
-                time.sleep(int(retry_after))
-            except ValueError:
-                pass
 
         if resp.headers.get("X-RateLimit-Remaining") == "0":
             raise BungieAPIError(
@@ -203,6 +234,8 @@ class BungieClient:
     ) -> Dict[str, Any]:
         """Retrieve a Destiny profile for ``destiny_membership_id``.
 
+        Results are cached in-memory for ``profile_ttl`` seconds to minimise
+        duplicate network requests during short polling intervals.
         ``components`` is a comma separated list of component codes as strings
         defined by Bungie's API. It is passed directly to the underlying
         request.
@@ -210,7 +243,15 @@ class BungieClient:
 
         path = f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
         params = {"components": components}
-        return self._get(path, params)
+        key = (str(membership_type), str(destiny_membership_id), components)
+        cached = self._profile_cache.get(key)
+        now = time.time()
+        if cached and cached[1] > now:
+            return cached[0]
+
+        result = self._get(path, params)
+        self._profile_cache[key] = (result, time.time() + self.profile_ttl)
+        return result
 
     def get_linked_profiles(
         self,
@@ -445,13 +486,17 @@ class BungieClient:
     def get_manifest(self) -> Dict[str, Any]:
         """Retrieve the Destiny manifest.
 
-        The result is cached on the client instance so repeated calls do not
-        trigger additional network requests.
+        The result is cached on the client instance for ``manifest_ttl``
+        seconds so repeated calls within the TTL do not trigger additional
+        network requests.
         """
+        now = time.time()
+        if self._manifest_cache and self._manifest_cache[1] > now:
+            return self._manifest_cache[0]
 
-        if self._manifest is None:
-            self._manifest = self._get("/Destiny2/Manifest/")
-        return self._manifest
+        data = self._get("/Destiny2/Manifest/")
+        self._manifest_cache = (data, time.time() + self.manifest_ttl)
+        return data
 
     def get_entity(self, entity_type: str, hash_id: int | str) -> Dict[str, Any]:
         """Retrieve a single entity definition from the manifest.
