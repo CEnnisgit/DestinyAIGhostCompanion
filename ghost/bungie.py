@@ -474,3 +474,143 @@ class BungieClient:
                 f"/Destiny2/Manifest/{entity_type}/{key}/"
             )
         return cache[key]
+
+    # GroupV2 endpoints --------------------------------------------------
+    def group_search(self, query: Dict[str, Any]) -> Dict[str, Any]:
+        """Search for groups or clans using the provided ``query`` payload."""
+
+        path = "/GroupV2/Search/"
+        return self._post(path, query)
+
+
+    def get_clan_members(
+        self,
+        group_id: int | str,
+        *,
+        member_type: int | None = None,
+        name_search: str | None = None,
+        current_page: int | None = None,
+    ) -> Dict[str, Any]:
+        """Retrieve the members of a clan."""
+
+        path = f"/GroupV2/{group_id}/Members/"
+        params: Dict[str, Any] = {}
+        if member_type is not None:
+            params["memberType"] = member_type
+        if name_search is not None:
+            params["nameSearch"] = name_search
+        if current_page is not None:
+            params["currentPage"] = current_page
+        return self._get(path, params or None)
+
+
+    def set_membership_type(
+        self,
+        group_id: int | str,
+        membership_type: int | str,
+        membership_id: int | str,
+        member_type: int | str,
+    ) -> Dict[str, Any]:
+        """Change the membership type of a clan member."""
+
+        path = (
+            f"/GroupV2/{group_id}/Members/{membership_type}/{membership_id}/"
+            f"SetMembershipType/{member_type}/"
+        )
+        return self._post(path, {})
+
+
+    def kick_member(
+        self,
+        group_id: int | str,
+        membership_type: int | str,
+        membership_id: int | str,
+    ) -> Dict[str, Any]:
+        """Kick a member from the clan."""
+
+        path = (
+            f"/GroupV2/{group_id}/Members/{membership_type}/{membership_id}/Kick/"
+        )
+        return self._post(path, {})
+
+
+    def ban_member(
+        self,
+        group_id: int | str,
+        membership_type: int | str,
+        membership_id: int | str,
+        *,
+        comment: str | None = None,
+        length: int | None = None,
+    ) -> Dict[str, Any]:
+        """Ban a member from the clan."""
+
+        path = (
+            f"/GroupV2/{group_id}/Members/{membership_type}/{membership_id}/Ban/"
+        )
+        payload: Dict[str, Any] = {}
+        if comment is not None:
+            payload["comment"] = comment
+        if length is not None:
+            payload["length"] = length
+        return self._post(path, payload)
+
+
+    # Fireteam endpoints -------------------------------------------------
+    def fireteam_search(
+        self,
+        platform: int | str,
+        activity_type: int | str,
+        date_range: int | str,
+        slot_filter: int | str,
+        page: int | str,
+        *,
+        exclude_immediate: bool | None = None,
+        lang_filter: str | None = None,
+    ) -> Dict[str, Any]:
+        """Search for public fireteams."""
+
+        path = (
+            f"/Fireteam/Search/Available/{platform}/{activity_type}/"
+            f"{date_range}/{slot_filter}/{page}/"
+        )
+        params: Dict[str, Any] = {}
+        if exclude_immediate is not None:
+            params["excludeImmediate"] = exclude_immediate
+        if lang_filter is not None:
+            params["langFilter"] = lang_filter
+        return self._get(path, params or None)
+
+    def list_clan_fireteams(
+        self,
+        group_id: int | str,
+        platform: int | str,
+        activity_type: int | str,
+        date_range: int | str,
+        slot_filter: int | str,
+        public_only: int | str,
+        page: int | str,
+        *,
+        exclude_immediate: bool | None = None,
+        lang_filter: str | None = None,
+    ) -> Dict[str, Any]:
+        """List fireteams for a specific clan."""
+
+        path = (
+            f"/Fireteam/Clan/{group_id}/Available/{platform}/{activity_type}/"
+            f"{date_range}/{slot_filter}/{public_only}/{page}/"
+        )
+        params: Dict[str, Any] = {}
+        if exclude_immediate is not None:
+            params["excludeImmediate"] = exclude_immediate
+        if lang_filter is not None:
+            params["langFilter"] = lang_filter
+        return self._get(path, params or None)
+
+    def fireteam_summary(
+        self, group_id: int | str, fireteam_id: int | str
+    ) -> Dict[str, Any]:
+        """Get summary information about a clan fireteam."""
+
+        path = f"/Fireteam/Clan/{group_id}/Summary/{fireteam_id}/"
+        return self._get(path)
