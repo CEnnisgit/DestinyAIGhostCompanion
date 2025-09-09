@@ -62,7 +62,7 @@ specified by `GHOST_TOKEN_FILE`). The encryption key is derived from the
 `GHOST_TOKEN_KEY` environment variable.
 
 ## Environment Variables
-Export the variables required for Ghost-Companion and Ollama:
+Fill in the `.env` file with your own values for the variables below, or export them directly:
 ```bash
 export BUNGIE_API_KEY="your_api_key"
 export BUNGIE_CLIENT_ID="your_oauth_client_id"
