@@ -31,9 +31,17 @@ class BungieClient:
     access_token:
         Optional OAuth access token to be included in requests. If provided,
         an ``Authorization`` header will be added using the ``Bearer`` scheme.
+    refresh_token:
+        Optional OAuth refresh token. When supplied, it is stored for future
+        token refresh operations.
     """
 
-    def __init__(self, api_key: str, access_token: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+    ) -> None:
         """Initialize a client with authentication and headers.
 
         The ``User-Agent`` header follows Bungie's recommended format
@@ -53,8 +61,24 @@ class BungieClient:
         self.session.headers["User-Agent"] = f"{app_name}/{version} (+{url})"
 
         self.access_token: str | None = None
+        self.refresh_token: str | None = refresh_token
         if access_token is not None:
             self.set_access_token(access_token)
+
+    def authenticate_user(self, tokens: Dict[str, Any]) -> None:
+        """Store OAuth tokens for subsequent requests.
+
+        Parameters
+        ----------
+        tokens:
+            Mapping containing at least an ``access_token`` and optionally a
+            ``refresh_token`` from the OAuth token exchange.
+        """
+
+        access = tokens.get("access_token")
+        if access:
+            self.set_access_token(access)
+        self.refresh_token = tokens.get("refresh_token", self.refresh_token)
 
     # ------------------------------------------------------------------
     # Token handling ---------------------------------------------------
