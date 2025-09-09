@@ -62,6 +62,12 @@ class BungieClient:
 
         self.access_token: str | None = None
         self.refresh_token: str | None = refresh_token
+        # Manifest caching -------------------------------------------------
+        # ``_manifest`` stores the result of ``get_manifest`` so subsequent
+        # calls do not hit the network again. ``_entity_cache`` keeps a mapping
+        # of entity type -> hash -> response for ``get_entity`` lookups.
+        self._manifest: Dict[str, Any] | None = None
+        self._entity_cache: Dict[str, Dict[str, Any]] = {}
         if access_token is not None:
             self.set_access_token(access_token)
 
@@ -211,3 +217,37 @@ class BungieClient:
         )
         params = {"components": components}
         return self._get(path, params)
+
+    # Manifest endpoints -------------------------------------------------
+    def get_manifest(self) -> Dict[str, Any]:
+        """Retrieve the Destiny manifest.
+
+        The result is cached on the client instance so repeated calls do not
+        trigger additional network requests.
+        """
+
+        if self._manifest is None:
+            self._manifest = self._get("/Destiny2/Manifest/")
+        return self._manifest
+
+    def get_entity(self, entity_type: str, hash_id: int | str) -> Dict[str, Any]:
+        """Retrieve a single entity definition from the manifest.
+
+        Parameters
+        ----------
+        entity_type:
+            The manifest component type, e.g. ``"DestinyInventoryItemDefinition"``.
+        hash_id:
+            Hash identifier of the desired entity.
+
+        Results are cached per entity type and hash to avoid redundant network
+        calls.
+        """
+
+        cache = self._entity_cache.setdefault(entity_type, {})
+        key = str(hash_id)
+        if key not in cache:
+            cache[key] = self._get(
+                f"/Destiny2/Manifest/{entity_type}/{key}/"
+            )
+        return cache[key]
