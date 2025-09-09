@@ -40,12 +40,18 @@ def test_get_raises_on_rate_limit():
 
 def test_get_sleeps_when_retry_after():
     headers = {"Retry-After": "5"}
-    with patch("ghost.bungie.requests.Session.get") as mock_get, patch("ghost.bungie.time.sleep") as mock_sleep:
-        mock_get.return_value = make_response({"ErrorCode": 1}, headers)
+    with patch("ghost.bungie.requests.Session.get") as mock_get, patch(
+        "ghost.bungie.time.sleep"
+    ) as mock_sleep:
+        mock_get.side_effect = [
+            make_response({"ErrorCode": 1}, headers),
+            make_response({"ErrorCode": 1}, {}),
+        ]
         client = BungieClient("key")
-        result = client._get("/foo")
-        mock_sleep.assert_called_once_with(5)
-        assert result["ErrorCode"] == 1
+        client._get("/foo")
+        client._get("/foo")
+        mock_sleep.assert_called_once()
+        assert mock_sleep.call_args.args[0] == pytest.approx(5, abs=0.1)
 
 
 def test_user_agent_header(monkeypatch):
@@ -97,11 +103,15 @@ def test_post_sleeps_when_retry_after():
     with patch("ghost.bungie.requests.Session.post") as mock_post, patch(
         "ghost.bungie.time.sleep"
     ) as mock_sleep:
-        mock_post.return_value = make_response({"ErrorCode": 1}, headers)
+        mock_post.side_effect = [
+            make_response({"ErrorCode": 1}, headers),
+            make_response({"ErrorCode": 1}, {}),
+        ]
         client = BungieClient("key")
-        result = client._post("/foo")
-        mock_sleep.assert_called_once_with(5)
-        assert result["ErrorCode"] == 1
+        client._post("/foo")
+        client._post("/foo")
+        mock_sleep.assert_called_once()
+        assert mock_sleep.call_args.args[0] == pytest.approx(5, abs=0.1)
 
 
 def test_post_raises_on_http_error():
