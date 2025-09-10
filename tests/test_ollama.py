@@ -1,6 +1,5 @@
-import requests
+from tests.stubs import requests, responses
 import pytest
-import responses
 
 from ghost.ollama import OllamaClient, OllamaError
 
