@@ -17,6 +17,12 @@ class ChatRequest(BaseModel):
     message: str
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    """Provide basic usage information."""
+    return {"detail": "Send POST /chat with {'message': ...}"}
+
+
 @app.post("/chat")
 def chat(req: ChatRequest) -> dict[str, str]:
     try:
