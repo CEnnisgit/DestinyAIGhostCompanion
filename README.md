@@ -85,6 +85,14 @@ export GHOST_TOKEN_KEY="change_me"       # key for encrypted token storage
 # export GHOST_TOKEN_FILE="/tmp/tokens"   # optional custom path
 ```
 
+## Testing Stubs
+
+For the unit tests this project provides lightweight stand-ins for the
+third-party `requests` and `responses` libraries.  These modules live under
+`tests/stubs/` and intentionally raise `NotImplementedError` for any real
+network operations.  They exist purely to support the test suite and should
+not be used in production deployments.
+
 ## Running the Server
 With the environment variables above set, start the FastAPI server using:
 ```bash

@@ -12,7 +12,7 @@ from functools import wraps
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Tuple
 
-import requests
+from . import requests
 
 POST = "POST"
 
