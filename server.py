@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from ghost.assistant import GhostAssistant
 from ghost.ollama import OllamaError
