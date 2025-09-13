@@ -37,8 +37,8 @@ def test_exchange_code_for_token():
                 "grant_type": "authorization_code",
                 "code": "code",
                 "client_id": "id",
-                "client_secret": "secret",
             },
+            auth=("id", "secret"),
         )
 
 
@@ -54,8 +54,8 @@ def test_refresh_token():
                 "grant_type": "refresh_token",
                 "refresh_token": "rtk",
                 "client_id": "id",
-                "client_secret": "secret",
             },
+            auth=("id", "secret"),
         )
 
 
