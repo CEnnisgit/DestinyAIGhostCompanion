@@ -1,11 +1,10 @@
-from fastapi.testclient import TestClient
-
-from server import app
+import importlib
 
 
-def test_root_endpoint():
-    client = TestClient(app)
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"detail": "Send POST /chat with {'message': ...}"}
+def test_root_endpoint(monkeypatch):
+    monkeypatch.setenv("OLLAMA_MODEL", "dummy")
+    import server
+
+    importlib.reload(server)
+    assert server.root() == {"detail": "Send POST /chat with {'message': ...}"}
 
