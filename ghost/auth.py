@@ -115,9 +115,8 @@ def exchange_code_for_token(client_id: str, client_secret: str, code: str) -> di
         "grant_type": "authorization_code",
         "code": code,
         "client_id": client_id,
-        "client_secret": client_secret,
     }
-    resp = requests.post(TOKEN_URL, data=payload)
+    resp = requests.post(TOKEN_URL, data=payload, auth=(client_id, client_secret))
     resp.raise_for_status()
     return resp.json()
 
@@ -129,8 +128,7 @@ def refresh_token(client_id: str, client_secret: str, refresh_token: str) -> dic
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
         "client_id": client_id,
-        "client_secret": client_secret,
     }
-    resp = requests.post(TOKEN_URL, data=payload)
+    resp = requests.post(TOKEN_URL, data=payload, auth=(client_id, client_secret))
     resp.raise_for_status()
     return resp.json()
