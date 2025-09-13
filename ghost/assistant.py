@@ -6,6 +6,7 @@ import os
 import re
 from typing import Any
 
+from . import auth
 from .bungie import BungieClient
 from .ollama import OllamaClient
 
@@ -41,6 +42,8 @@ class GhostAssistant:
             key = api_key or os.getenv("BUNGIE_API_KEY", "")
             bungie_client = BungieClient(key)
         self.bungie = bungie_client
+        if auth.STORED_TOKENS:
+            self.bungie.authenticate_user(auth.STORED_TOKENS)
         self.ollama = ollama_client or OllamaClient()
 
     # ------------------------------------------------------------------
