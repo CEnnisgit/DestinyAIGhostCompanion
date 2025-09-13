@@ -54,4 +54,5 @@ def oauth_callback(code: str) -> dict:
     client_secret = os.environ["BUNGIE_CLIENT_SECRET"]
     tokens = auth.exchange_code_for_token(client_id, client_secret, code)
     auth.save_tokens(tokens)
+    assistant.bungie.authenticate_user(tokens)
     return tokens
