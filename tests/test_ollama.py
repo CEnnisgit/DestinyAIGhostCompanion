@@ -32,6 +32,14 @@ def test_generate_http_error(monkeypatch):
         client.generate("hello")
 
 
+def test_missing_model_raises(monkeypatch):
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    with pytest.raises(OllamaError):
+        OllamaClient()
+    with pytest.raises(OllamaError):
+        OllamaClient(model="")
+
+
 @responses.activate
 def test_generate_connection_error(monkeypatch):
     monkeypatch.setenv("OLLAMA_HOST", "http://example")
