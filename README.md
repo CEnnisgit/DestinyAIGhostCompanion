@@ -2,6 +2,30 @@
 The AI Ghost Companion is a minimalist chat-based assistant for Destiny 2. It combines the Bungie.net API with an AI language model to answer questions in real time about quests, activities, vendors, lore, and even manage your Guardian’s gear—all through a simple conversational interface.
 
 ## Quick Start
+```bash
+pip install fastapi uvicorn pydantic requests responses pytest python-dotenv
+```
+
+Start the local Ollama service:
+
+```bash
+ollama serve
+```
+
+Run the FastAPI server:
+
+```bash
+uvicorn server:app --reload
+```
+
+The root endpoint (`GET /`) returns usage instructions once this route is added.
+
+Execute the test suite:
+
+```bash
+pytest
+```
+
 **Note:** Set the `BUNGIE_API_KEY` environment variable before running the examples below.
 ```python
 from ghost.assistant import GhostAssistant
