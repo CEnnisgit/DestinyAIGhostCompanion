@@ -18,6 +18,8 @@ class OllamaClient:
     def __init__(self, host: str | None = None, model: str | None = None) -> None:
         self.host = host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.model = model or os.getenv("OLLAMA_MODEL", "")
+        if not self.model:
+            raise OllamaError("Ollama model is not set")
 
     def generate(self, prompt: str) -> str:
         """Send ``prompt`` to the Ollama ``/api/generate`` endpoint.
