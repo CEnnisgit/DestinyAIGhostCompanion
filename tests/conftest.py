@@ -6,15 +6,9 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Provide test-only stubs for external HTTP libraries when they're not installed
-try:  # pragma: no cover - imported for side effects
-    import requests  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - runtime fallback
-    from tests.stubs import requests  # type: ignore
-    sys.modules["requests"] = requests
+# Always provide test-only stubs for external HTTP libraries
+from tests.stubs import requests as _requests  # type: ignore
+from tests.stubs import responses as _responses  # type: ignore
 
-try:  # pragma: no cover - imported for side effects
-    import responses  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - runtime fallback
-    from tests.stubs import responses  # type: ignore
-    sys.modules["responses"] = responses
+sys.modules["requests"] = _requests
+sys.modules["responses"] = _responses
