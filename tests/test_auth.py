@@ -13,10 +13,15 @@ def make_response(data):
 
 
 def test_get_authorization_url():
-    url = auth.get_authorization_url("123", state="abc", scopes=["ReadBasicUserProfile"])
+    url = auth.get_authorization_url(
+        "123",
+        state="abc",
+        scopes=["ReadBasicUserProfile"],
+        redirect_uri="https://example.com/callback",
+    )
     assert (
         url
-        == "https://www.bungie.net/en/OAuth/Authorize?client_id=123&response_type=code&state=abc&scope=ReadBasicUserProfile"
+        == "https://www.bungie.net/en/OAuth/Authorize?client_id=123&response_type=code&state=abc&scope=ReadBasicUserProfile&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback"
     )
 
 

@@ -78,7 +78,12 @@ def load_tokens() -> Dict[str, str]:
 STORED_TOKENS: Dict[str, str] = load_tokens()
 
 
-def get_authorization_url(client_id: str, state: str | None = None, scopes: list[str] | None = None) -> str:
+def get_authorization_url(
+    client_id: str,
+    state: str | None = None,
+    scopes: list[str] | None = None,
+    redirect_uri: str | None = None,
+) -> str:
     """Return the user authorization URL.
 
     Parameters
@@ -89,6 +94,8 @@ def get_authorization_url(client_id: str, state: str | None = None, scopes: list
         Optional state parameter to include in the authorization request.
     scopes:
         Optional list of OAuth scopes to request.
+    redirect_uri:
+        Optional redirect URI for the authorization response.
     """
 
     params: dict[str, str] = {"client_id": client_id, "response_type": "code"}
@@ -96,6 +103,8 @@ def get_authorization_url(client_id: str, state: str | None = None, scopes: list
         params["state"] = state
     if scopes:
         params["scope"] = " ".join(scopes)
+    if redirect_uri is not None:
+        params["redirect_uri"] = redirect_uri
     return f"{AUTH_URL}?{urlencode(params)}"
 
 
