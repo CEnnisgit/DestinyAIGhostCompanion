@@ -42,7 +42,8 @@ def chat(req: ChatRequest) -> dict[str, str]:
 def oauth_authorize() -> dict[str, str]:
     """Return the Bungie authorization URL."""
     client_id = os.environ["BUNGIE_CLIENT_ID"]
-    url = auth.get_authorization_url(client_id)
+    redirect_uri = os.environ["BUNGIE_REDIRECT_URI"]
+    url = auth.get_authorization_url(client_id, redirect_uri=redirect_uri)
     return {"authorization_url": url}
 
 
