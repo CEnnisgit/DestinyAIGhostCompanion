@@ -27,11 +27,14 @@ def test_oauth_callback(monkeypatch):
 
     importlib.reload(server)
     tokens = {"access_token": "atk", "refresh_token": "rtk"}
-    with patch("server.auth.exchange_code_for_token") as mock_exchange, patch(
-        "server.auth.save_tokens"
-    ) as mock_save:
+    events: list[str] = []
+    with patch("server.auth.exchange_code_for_token") as mock_exchange, \
+        patch("server.auth.save_tokens", side_effect=lambda t: events.append("save")) as mock_save, \
+        patch("server.assistant.bungie.authenticate_user", side_effect=lambda t: events.append("auth")) as mock_auth:
         mock_exchange.return_value = tokens
         result = server.oauth_callback(code="abc")
         assert result == tokens
         mock_exchange.assert_called_once_with("id", "secret", "abc")
         mock_save.assert_called_once_with(tokens)
+        mock_auth.assert_called_once_with(tokens)
+        assert events == ["save", "auth"]
