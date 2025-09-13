@@ -63,7 +63,9 @@ specified by `GHOST_TOKEN_FILE`). The encryption key is derived from the
 `GHOST_TOKEN_KEY` environment variable.
 
 ## Environment Variables
-Fill in the `.env` file with your own values for the variables below, or export them directly:
+Environment variables are loaded automatically from a `.env` file via
+[`python-dotenv`](https://github.com/theskumar/python-dotenv). Fill in the `.env` file with your own values for the variables below,
+or export them directly:
 
 ```dotenv
 # .env
