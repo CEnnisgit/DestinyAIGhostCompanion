@@ -476,13 +476,21 @@ class BungieClient:
         membership_type: int | str,
         destiny_membership_id: str,
         character_id: str,
+        collectible_presentation_node_hash: str,
         components: str,
     ) -> Dict[str, Any]:
-        """Retrieve collectible status for a character."""
+        """Retrieve collectible status for a character presentation node.
+
+        Parameters
+        ----------
+        collectible_presentation_node_hash:
+            Hash identifier for the presentation node whose collectibles should
+            be returned.
+        """
 
         path = (
             f"/Destiny2/{membership_type}/Profile/{destiny_membership_id}/"
-            f"Character/{character_id}/Collectibles/"
+            f"Character/{character_id}/Collectibles/{collectible_presentation_node_hash}/"
         )
         params = {"components": components}
         return self._get(path, params)

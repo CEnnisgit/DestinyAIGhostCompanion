@@ -397,10 +397,13 @@ def test_get_collectibles_success():
     with patch("ghost.bungie.requests.Session.get") as mock_get:
         mock_get.return_value = make_response(data)
         client = BungieClient("key")
-        result = client.get_collectibles(1, "123", "456", "800")
+        result = client.get_collectibles(1, "123", "456", "789", "800")
         assert result == data
         mock_get.assert_called_once_with(
-            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Collectibles/",
+            (
+                f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/"
+                "Collectibles/789/"
+            ),
             params={"components": "800"},
         )
 
@@ -412,9 +415,12 @@ def test_get_collectibles_error():
         )
         client = BungieClient("key")
         with pytest.raises(BungieAPIError):
-            client.get_collectibles(1, "123", "456", "800")
+            client.get_collectibles(1, "123", "456", "789", "800")
         mock_get.assert_called_once_with(
-            f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/Collectibles/",
+            (
+                f"{BASE_URL}/Destiny2/1/Profile/123/Character/456/"
+                "Collectibles/789/"
+            ),
             params={"components": "800"},
         )
 
