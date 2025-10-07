@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -15,8 +18,21 @@ from ghost.ollama import OllamaError
 from ghost.bungie import BungieAPIError
 from ghost import auth
 
+def get_repo_root() -> Path:
+    """Resolve the directory that holds the application files."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS"))  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
+REPO_ROOT = get_repo_root()
+FRONTEND_BUILD_DIR = REPO_ROOT / "frontend"
+
 app = FastAPI()
 assistant = GhostAssistant()
+
+# Serve static files only in the bundled executable
+if getattr(sys, "frozen", False):
+    app.mount("/", StaticFiles(directory=str(FRONTEND_BUILD_DIR), html=True), name="static")
 
 
 class ChatRequest(BaseModel):
