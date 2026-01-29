@@ -1,0 +1,50 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Release packaging outputs
+release/artifacts/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+
+# Logs and runtime output
+logs/
+*.log
+
+# Databases and app data
+data/
+ghost_companion.db*
+
+# Node / frontend
+frontend/node_modules/
+frontend/build/
+
+# Caches and coverage
+.cache/
+pytest_cache/
+.coverage
+htmlcov/
+
+# Large/optional local model assets
+llama-destiny-lora/
+cache/
+
+# Nested local test repo (do not publish)
+Ghost-Testing/

@@ -1,0 +1,3640 @@
+﻿"""High level assistant orchestrating Bungie and model clients.
+
+Supports per-request provider routing between Grok, Ollama, and a local
+fine-tuned model.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import Any
+import time
+import logging
+import difflib
+
+from . import auth
+from .bungie import BungieClient, BungieAPIError
+from .grok import GrokClient
+from .ollama import OllamaClient
+from .finetune import FineTuneClient
+
+
+class GhostAssistant:
+    """Orchestrates requests between Bungie and Ollama.
+
+    The assistant performs a very small amount of intent detection. If the
+    incoming message asks for Destiny player information (``player <name>``)
+    the Bungie API is queried and the results are fed into the language
+    model. Otherwise the message is passed directly to the model.
+    """
+
+    def __init__(
+        self,
+        bungie_client: BungieClient | None = None,
+        grok_client: GrokClient | None = None,
+        ollama_client: OllamaClient | None = None,
+        finetune_client: FineTuneClient | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        """Create a new assistant instance.
+
+        Parameters
+        ----------
+        bungie_client:
+            Optional preconfigured :class:`BungieClient` instance.
+        grok_client:
+            Optional client used for language model interactions.
+        api_key:
+            If ``None``, the key is read from the ``BUNGIE_API_KEY`` environment
+            variable.
+        """
+        if bungie_client is None:
+            key = api_key or os.getenv("BUNGIE_API_KEY", "")
+            bungie_client = BungieClient(key)
+        self.bungie = bungie_client
+        # Store current tokens for handler methods (set from auth or per-request)
+        self._current_tokens: dict | None = None
+        if auth.STORED_TOKENS:
+            # Apply any tokens loaded at import time and keep them available
+            self.bungie.authenticate_user(auth.STORED_TOKENS)
+            self._current_tokens = auth.STORED_TOKENS
+        # Defer model client instantiation until used
+        self._clients: dict[str, Any] = {}
+        if grok_client is not None:
+            self._clients["grok"] = grok_client
+        if ollama_client is not None:
+            self._clients["ollama"] = ollama_client
+        if finetune_client is not None:
+            self._clients["finetune"] = finetune_client
+        # Track last resolved item for pronoun-based commands
+        self._last_item: dict[str, Any] | None = None
+        # Track last inventory location mentioned for context-aware transfers
+        self._last_location: str | None = None
+        # Bucket location cache: bucketHash -> ItemLocation enum value
+        self._bucket_loc_cache: dict[int, int] = {}
+        self._postmaster_bucket_cache: dict[int, bool] = {}
+
+    def _get_client(self, provider: str) -> Any:
+        provider = provider.lower()
+        if provider in self._clients:
+            return self._clients[provider]
+        if provider == "grok":
+            client = GrokClient()
+        elif provider == "ollama":
+            client = OllamaClient()
+        elif provider == "finetune":
+            client = FineTuneClient()
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
+        self._clients[provider] = client
+        return client
+
+    def _default_provider(self) -> str:
+        # Prefer explicitly injected clients first (useful for tests)
+        if "ollama" in self._clients:
+            return "ollama"
+        if "grok" in self._clients:
+            return "grok"
+        if "finetune" in self._clients:
+            return "finetune"
+        # Fall back to environment hints
+        if os.getenv("OLLAMA_MODEL"):
+            return "ollama"
+        if os.getenv("XAI_API_KEY"):
+            return "grok"
+        # Default to local fine-tuned wrapper
+        return "finetune"
+
+    def _get_destiny_membership(self) -> tuple[str, int] | None:
+        """Get the Destiny membership ID and type from current authentication.
+
+        Prefers per-request tokens if provided, but will also proceed when the
+        underlying ``BungieClient`` already has an access token.
+        """
+        logger = logging.getLogger("ghost")
+        try:
+            logger.info(
+                "[assistant] Resolving membership: has_tokens=%s has_access_token=%s",
+                bool(self._current_tokens),
+                bool(getattr(self.bungie, "access_token", None)),
+            )
+        except Exception:
+            pass
+        # If tokens already include membership details, prefer them
+        if self._current_tokens and "membership_id" in self._current_tokens and "membership_type" in self._current_tokens:
+            try:
+                mid = str(self._current_tokens["membership_id"])
+                mtype_raw = self._current_tokens["membership_type"]
+                mtype = int(mtype_raw) if mtype_raw is not None else None
+                valid_types = {1, 2, 3, 4, 5, 10}
+                if mid and (mtype in valid_types):
+                    logger.info("[assistant] Using membership from tokens (type=%s)", mtype)
+                    return mid, mtype
+                else:
+                    logger.info("[assistant] Ignoring invalid membership_type from tokens: %s", mtype_raw)
+            except Exception as e:
+                logger.exception("[assistant] Error reading membership from tokens: %s", e)
+
+        if not (self._current_tokens or getattr(self.bungie, "access_token", None)):
+            logger.info("[assistant] No tokens or access token available")
+            return None
+
+        try:
+            memberships = self.bungie.get_memberships_for_current_user()
+            logger.info(f"[assistant] Memberships response: {memberships}")
+            resp = memberships.get("Response", {}) if isinstance(memberships, dict) else {}
+            destiny_memberships = resp.get("destinyMemberships", []) or []
+            primary = resp.get("primaryMembershipId")
+            if destiny_memberships:
+                logger.info("[assistant] Found %s memberships; primary=%s", len(destiny_memberships), primary)
+                logger.info(f"[assistant] Destiny memberships: {destiny_memberships}")
+                if primary:
+                    for m in destiny_memberships:
+                        if str(m.get("membershipId")) == str(primary):
+                            return m.get("membershipId"), m.get("membershipType")
+                # fallback to first
+                m = destiny_memberships[0]
+                return m.get("membershipId"), m.get("membershipType")
+        except Exception:
+            pass
+
+        # Last resort: if we only have a Bungie.net user id, resolve linked Destiny memberships
+        try:
+            if self._current_tokens and self._current_tokens.get("membership_id") and not self._current_tokens.get("membership_type"):
+                logger.info("[assistant] Falling back to GetMembershipsById using Bungie user id")
+                bungie_user_id = str(self._current_tokens["membership_id"])
+                data = self.bungie.get_memberships_by_id(bungie_user_id, 254)  # 254 = BungieNext
+                resp = data.get("Response", {}) if isinstance(data, dict) else {}
+                dms = resp.get("destinyMemberships", []) or []
+                if dms:
+                    m = dms[0]
+                    return m.get("membershipId"), m.get("membershipType")
+        except Exception:
+            pass
+        return None
+
+    # ------------------------------------------------------------------
+    def chat(self, message: str, provider: str | None = None, tokens: dict | None = None) -> str:
+        """Return a reply for ``message``.
+
+        When the message matches ``player <name>`` the Bungie ``search_destiny_player``
+        endpoint is invoked and the resulting payload is included in the prompt
+        sent to the language model.
+        """
+        self._current_tokens = tokens
+        if tokens:
+            try:
+                self.bungie.authenticate_user(tokens)
+            except Exception:
+                pass
+
+        model_provider = (provider or self._default_provider()).lower()
+        client = self._get_client(model_provider)
+
+        def send_with_system(system_prompt: str, user_prompt: str) -> str:
+            try:
+                if isinstance(client, OllamaClient):
+                    combined = f"System: {system_prompt}\nUser: {user_prompt}\nAssistant:"
+                    return client.generate(combined)  # type: ignore[no-any-return]
+            except Exception:
+                pass
+            if hasattr(client, "generate_with_system"):
+                return client.generate_with_system(system_prompt, user_prompt)  # type: ignore[no-any-return]
+            combined = f"System: {system_prompt}\nUser: {user_prompt}\nAssistant:"
+            return client.generate(combined)  # type: ignore[no-any-return]
+
+        # Quick season response
+        if "season" in message.lower():
+            return "Ah, my Guardian! We're currently in Season of the Wish - the season of wishes granted and mysteries revealed. What adventures shall we pursue in this magical time?"
+
+        match = re.search(r"player\s+(\w+)", message, flags=re.IGNORECASE)
+        if match:
+            name = match.group(1)
+            data: Any = self.bungie.search_destiny_player(0, name)
+            
+            system_prompt = (
+                "You are the Ghost from Destiny 2. Respond briefly in character. "
+                "Use Bungie API data to answer accurately. Keep responses short and simple."
+            )
+            user_prompt = f"User asked about player {name}.\n\nBungie API search results: {data}\n\nRespond as the Ghost using this data."
+            return send_with_system(system_prompt, user_prompt)
+
+        # Multi-command handling: split on ",", "and", "then" for action verbs
+        lowered_all = message.lower()
+        if any(v in lowered_all for v in ("transfer", "move", "equip", "vault")) and re.search(r"(,|\band\b|\bthen\b)", lowered_all):
+            try:
+                parts = re.split(r"\s*(?:,|\band\b|\bthen\b)\s*", message, flags=re.IGNORECASE)
+            except Exception:
+                parts = [message]
+            results: list[str] = []
+            for seg in parts:
+                seg = seg.strip()
+                if not seg:
+                    continue
+                out = self._handle_command_segment(seg)
+                if out:
+                    results.append(out)
+            if results:
+                return " ".join(results)
+
+        # Handle inventory/vault listing commands
+        # General vault query
+        # Be forgiving of a common typo: "vaul" (missing trailing 't')
+        general_vault_match = re.search(r'\bwhat\s+is\s+in\s+my\s+vaul[t]?\b', message, re.IGNORECASE)
+        if general_vault_match:
+            return self._handle_inventory_list("items", "vault")
+
+        # General inventory query (accept common misspelling 'invetory')
+        general_inventory_match = re.search(r'\bwhat\s+is\s+in\s+my\s+(?:inventory|invetory|inventorie)\b', message, re.IGNORECASE)
+        if general_inventory_match:
+            return self._handle_inventory_list("items", "inventory")
+
+        vault_list_match = re.search(r'\b(?:what\s+)?(weapons|armor|gear|items)\s+(?:do\s+(?:i|you)\s+have\s*|are\s*)?(?:in\s*)?(?:my\s*)?vaul[t]?\b', message, re.IGNORECASE)
+        if vault_list_match:
+            item_type = vault_list_match.group(1).lower()
+            return self._handle_inventory_list(item_type, "vault")
+
+        inventory_list_match = re.search(r'\b(?:what\s+)?(weapons|armor|gear|items)\s+(?:do\s+(?:i|you)\s+have\s*|are\s*)?(?:in\s*)?(?:my\s*)?(?:inventory|invetory|inventorie)\b', message, re.IGNORECASE)
+        if inventory_list_match:
+            item_type = inventory_list_match.group(1).lower()
+            return self._handle_inventory_list(item_type, "inventory")
+
+        # Postmaster listing
+        # Accepts variations: "postmaster", "post master", "mypost master", with optional class target
+        postmaster_list_match = re.search(r"(?:what(?:'s|s)?\s+in\s+|what\s+is\s+in\s+|show\s+|list\s+)(?:my\s*)?post[-\s]?master(?:\s+on\s+my\s+(hunter|warlock|titan)s?)?\b", message, re.IGNORECASE)
+        if postmaster_list_match:
+            class_target = None
+            if postmaster_list_match.lastindex and postmaster_list_match.group(1):
+                class_target = postmaster_list_match.group(1).lower()
+            return self._handle_postmaster_list(class_target)
+
+        # Alternate phrasing: "my hunter's postmaster" / "my hunters post master"
+        postmaster_possessive = re.search(r'my\s+(hunter|warlock|titan)[â€™\']?s?\s+post[-\s]?master\b', message, re.IGNORECASE)
+        if postmaster_possessive:
+            return self._handle_postmaster_list(postmaster_possessive.group(1).lower())
+
+        # Handle item management commands
+        lowered = message.lower()
+        # Equip <item>
+        # Be tolerant of common typos and allow target class: eqip/equp/equi, and "on/to my <class>"
+        equip_match = re.search(r"\b(?:can\s+you\s+)?e(?:qui?p|q?uip)\s+(?:my\s+)?(.+?)(?:\s+(?:on|to|ot)\s+(?:my\s+)?(hunter|warlock|titan|me)s?)?(?:\?)?$", message, re.IGNORECASE)
+        if equip_match:
+            item_name = equip_match.group(1).strip()
+            class_target = (equip_match.group(2) or '').lower() if equip_match.lastindex and equip_match.lastindex >= 2 else None
+            # Handle pronouns
+            if item_name.lower() in {"it", "it back"} and self._last_item:
+                item_name = self._last_item.get("name", item_name)
+            return self._handle_equip_item(item_name, class_target)
+
+        # Combined transfer + equip in one sentence
+        if ("transfer" in lowered or "move" in lowered) and ("equip" in lowered):
+            explicit_from_vault = ("from my vault" in lowered)
+            # Prefer the name after 'equip' if present and not a pronoun
+            m_equip = re.search(r'\bequip\s+(?:my\s+)?(.+)$', message, re.IGNORECASE)
+            equip_name = m_equip.group(1).strip() if m_equip else None
+            # Also extract name after 'transfer/move' (up to " from| to| and|$")
+            m_transfer = re.search(r'(?:transfer|move)\s+(?:my\s+)?(.+?)(?=\s+(?:from|to|and)\b|$)', message, re.IGNORECASE)
+            transfer_name = m_transfer.group(1).strip() if m_transfer else None
+            # Resolve final item name
+            item_name = None
+            if equip_name and equip_name.lower() not in {"it", "it back"}:
+                item_name = equip_name
+            elif transfer_name:
+                item_name = transfer_name
+            elif equip_name:
+                item_name = equip_name  # fallback even if pronoun
+            if item_name:
+                return self._handle_transfer_then_equip(item_name, explicit_from_vault)
+
+        # Pronoun transfer before generic transfer
+        pronoun_transfer = re.search(r'\b(?:transfer|move)\s+it\s+(?:back\s+)?(?:to\s+)?(?:my\s+)?(vault|inventory)\b', message, re.IGNORECASE)
+        if pronoun_transfer:
+            target = pronoun_transfer.group(1).lower()
+            return self._handle_transfer_pronoun(target)
+
+        # Transfer <item> to my vault
+        transfer_to_vault_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+(?:to\s+)?(?:my\s+)?vault\b', message, re.IGNORECASE)
+        if transfer_to_vault_match:
+            item_name = transfer_to_vault_match.group(1).strip()
+            return self._handle_vault_item(item_name)
+
+        # Transfer <item> from my vault (to inventory implied)
+        transfer_from_vault_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+from\s+my\s+vault\b', message, re.IGNORECASE)
+        if transfer_from_vault_match:
+            item_name = transfer_from_vault_match.group(1).strip()
+            return self._handle_transfer_from_vault(item_name)
+
+        # Transfer <item> to my inventory (from last location or vault implied)
+        transfer_to_inventory_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+(?:to\s+)?(?:my\s+)?inventory\b', message, re.IGNORECASE)
+        if transfer_to_inventory_match:
+            item_name = transfer_to_inventory_match.group(1).strip()
+            if self._last_location == "postmaster":
+                return self._handle_pull_from_postmaster(item_name)
+            else:
+                return self._handle_transfer_from_vault(item_name)
+
+        # Transfer <item> from my inventory (to vault implied)
+        transfer_from_inventory_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+from\s+my\s+inventory\b', message, re.IGNORECASE)
+        if transfer_from_inventory_match:
+            item_name = transfer_from_inventory_match.group(1).strip()
+            return self._handle_transfer_to_vault(item_name)
+
+        # Transfer <item> from my <character> to my <character>
+        transfer_between_characters_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+from\s+my\s+(hunter|warlock|titan)\s+to\s+my\s+(hunter|warlock|titan)\b', message, re.IGNORECASE)
+        if transfer_between_characters_match:
+            item_name = transfer_between_characters_match.group(1).strip()
+            from_class = transfer_between_characters_match.group(2).lower()
+            to_class = transfer_between_characters_match.group(3).lower()
+            return self._handle_transfer_between_characters(item_name, from_class, to_class)
+
+        # Transfer <item> to my <character>
+        transfer_to_character_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+(?:to\s+)?(?:my\s+)?(hunter|warlock|titan|me)\b', message, re.IGNORECASE)
+        if transfer_to_character_match:
+            item_name = transfer_to_character_match.group(1).strip()
+            target_class = transfer_to_character_match.group(2).lower()
+            # Handle pronouns
+            if item_name.lower() in {"it", "it back"} and self._last_item:
+                item_name = self._last_item.get("name", item_name)
+            return self._handle_transfer_to_character(item_name, target_class)
+
+        # Transfer me <item>  -> treat as transfer <item> to my active character ("me")
+        transfer_me_match = re.search(r"\b(?:transfer|move)\s+me\s+(?:my\s+)?(.+)$", message, re.IGNORECASE)
+        if transfer_me_match:
+            item_name = transfer_me_match.group(1).strip().rstrip('\\/?.!')
+            if item_name.lower() in {"it", "it back"} and self._last_item:
+                item_name = self._last_item.get("name", item_name)
+            return self._handle_transfer_to_character(item_name, "me")
+
+        # Pull <item> from my postmaster
+        pull_from_postmaster_match = re.search(r'\b(?:pull|get|transfer|move)\s+(?:my\s+)?(.+?)\s+from\s+my\s+post[-\s]?master\b', message, re.IGNORECASE)
+        if pull_from_postmaster_match:
+            item_name = pull_from_postmaster_match.group(1).strip()
+            return self._handle_pull_from_postmaster(item_name)
+
+        # Dismantle <item> (optionally from postmaster)
+        dismantle_match = re.search(r'\bdismantle\s+(?:my\s+)?(.+?)(?:\s+from\s+my\s+post[-\s]?master)?$', message, re.IGNORECASE)
+        if dismantle_match:
+            item_name = dismantle_match.group(1).strip()
+            return self._handle_dismantle_item(item_name)
+
+        transfer_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+(?:to\s+)?(?:my\s+)?(?:inventory|invetory|inventorie)\b', message, re.IGNORECASE)
+        if transfer_match:
+            item_name = transfer_match.group(1).strip()
+            return self._handle_transfer_from_vault(item_name)
+
+        # Transfer <item> to my <class>
+        transfer_to_char = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+to\s+my\s+(hunter|warlock|titan)\b', message, re.IGNORECASE)
+        if transfer_to_char:
+            item_name = transfer_to_char.group(1).strip()
+            class_target = transfer_to_char.group(2).lower()
+            return self._handle_transfer_to_character(item_name, class_target)
+
+        # Transfer <item> to my vault
+        transfer_to_vault_match = re.search(r'\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+(?:to\s+)?(?:my\s+)?vault\b', message, re.IGNORECASE)
+        if transfer_to_vault_match:
+            item_name = transfer_to_vault_match.group(1).strip()
+            return self._handle_vault_item(item_name)
+
+        # Pronoun: "transfer it (back) to my <vault|inventory>"
+        pronoun_transfer = re.search(r'\b(?:transfer|move)\s+it\s+(?:back\s+)?(?:to\s+)?(?:my\s+)?(vault|inventory)\b', message, re.IGNORECASE)
+        if pronoun_transfer:
+            target = pronoun_transfer.group(1).lower()
+            return self._handle_transfer_pronoun(target)
+
+        vault_match = re.search(r'\bvault\s+(?:my\s+)?(.+)', message, re.IGNORECASE)
+        if vault_match:
+            item_name = vault_match.group(1).strip()
+            return self._handle_vault_item(item_name)
+
+        equip_match = re.search(r"\be(?:qui?p|q?uip)\s+(?:my\s+)?(.+?)(?:\s+(?:on|to|ot)\s+(?:my\s+)?(hunter|warlock|titan|me)s?)?$", message, re.IGNORECASE)
+        if equip_match:
+            item_name = equip_match.group(1).strip()
+            class_target = (equip_match.group(2) or '').lower() if equip_match.lastindex and equip_match.lastindex >= 2 else None
+            # Handle pronouns like "equip it to my titan"
+            if item_name.lower() in {"it", "it back"} and self._last_item:
+                item_name = self._last_item.get("name", item_name)
+            return self._handle_equip_item(item_name, class_target)
+
+        # Check for stats requests
+        stats_match = re.search(r'\b(?:show\s+|what\s+are\s+|tell\s+me\s+)?(?:my\s+|the\s+|guardian.?s?\s+)?stats(?:\s+for\s+(.+))?', message, re.IGNORECASE)
+        if stats_match:
+            stat_type = stats_match.group(1) if stats_match.group(1) else None
+            return self._handle_stats_request(stat_type, send_with_system, model_provider)
+
+        # Check for vendor requests
+        vendor_match = re.search(r'\b(?:show\s+)?(?:visit\s+)?vendors?(?:\s+in\s+(.+))?', message, re.IGNORECASE)
+        if vendor_match:
+            location = vendor_match.group(1) if vendor_match.group(1) else None
+            return self._handle_vendor_request(location)
+
+        # Check for milestone requests
+        milestone_match = re.search(r'\b(?:show\s+|what\s+are\s+the\s+)?milestones?(?:\s+for\s+(.+))?', message, re.IGNORECASE)
+        if milestone_match:
+            milestone_type = milestone_match.group(1) if milestone_match.group(1) else None
+            return self._handle_milestone_request(milestone_type)
+
+        # Check for activity history requests
+        activity_match = re.search(r'\b(?:show\s+)?(?:my\s+)?(?:recent\s+)?activities?(?:\s+for\s+(.+))?', message, re.IGNORECASE)
+        if activity_match:
+            activity_type = activity_match.group(1) if activity_match.group(1) else None
+            return self._handle_activity_request(activity_type)
+
+        # Check for character info requests
+        character_match = re.search(r'\b(?:show\s+)?(?:my\s+)?characters?(?:\s+info)?', message, re.IGNORECASE)
+        if character_match:
+            return self._handle_character_request()
+
+        # Check for leaderboard requests
+        leaderboard_match = re.search(r'\b(?:show\s+)?leaderboards?(?:\s+for\s+(.+))?', message, re.IGNORECASE)
+        if leaderboard_match:
+            stat_name = leaderboard_match.group(1) if leaderboard_match.group(1) else None
+            return self._handle_leaderboard_request(stat_name)
+
+        if "destiny" in message.lower() or "bungie" in message.lower():
+            try:
+                milestones = self.bungie.get_milestones()
+                trending = self.bungie.get_trending_categories()
+                latest_trending = self.bungie.get_trending_category("Latest", 0)
+                global_alerts = self.bungie.get_global_alerts()
+
+                # Parse milestones into readable names
+                milestone_names = []
+                for key in list(milestones["Response"].keys())[:5]:  # Limit to first 5
+                    try:
+                        definition = self.bungie._get(
+                            f"/Destiny2/Manifest/DestinyMilestoneDefinition/{key}/",
+                            authenticated=False
+                        )
+                        name = definition["Response"]["displayProperties"]["name"]
+                        milestone_names.append(name)
+                    except:
+                        continue
+
+                # Parse trending categories
+                trending_info = []
+                for category in trending["Response"]["categories"][:3]:  # First 3 categories
+                    cat_name = category["categoryName"]
+                    if cat_name == "News" and "entries" in category and "results" in category["entries"]:
+                        recent_news = []
+                        for entry in category["entries"]["results"][:2]:  # First 2 news
+                            if entry["creationDate"].startswith("2024") or entry["creationDate"].startswith("2025"):
+                                recent_news.append(entry["displayName"])
+                        if recent_news:
+                            trending_info.append(f"{cat_name}: {', '.join(recent_news)}")
+                        else:
+                            trending_info.append(f"{cat_name}: No recent updates")
+                    else:
+                        trending_info.append(f"{cat_name}: {len(category.get('entries', {}).get('results', []))} items")
+
+                # Parse latest trending
+                latest_info = ""
+                if "Response" in latest_trending and latest_trending["Response"]["results"]:
+                    latest_creations = [entry["displayName"] for entry in latest_trending["Response"]["results"][:3]]
+                    if latest_creations:
+                        latest_info = f"Latest creations: {', '.join(latest_creations)}."
+
+                # Parse global alerts
+                alerts_info = ""
+                if "Response" in global_alerts and global_alerts["Response"]:
+                    active_alerts = [alert["AlertHtml"] for alert in global_alerts["Response"] if alert.get("AlertHtml")]
+                    if active_alerts:
+                        alerts_info = f"Global Alerts: {'; '.join(active_alerts)}."
+
+                # Prepare data for Ollama
+                destiny_data = f"Current Destiny 2 Milestones: {', '.join(milestone_names)}\nTrending: {'; '.join(trending_info)}\n{latest_info}\n{alerts_info}"
+
+                system_prompt = (
+                    "You are the Ghost from Destiny 2. Respond briefly in character. "
+                    "Use only the provided Bungie API data. Keep responses short."
+                )
+
+                user_prompt = f"User query: {message}\n\nCurrent Bungie API data (as of October 6, 2025):\n{destiny_data}\n\nRespond as the Ghost using only this data."
+
+                return send_with_system(system_prompt, user_prompt)
+            except Exception as e:
+                # If API fails, fall back to general response
+                pass
+
+        # Check for season-specific questions
+        if "season" in message.lower() and ("what" in message.lower() or "current" in message.lower() or "now" in message.lower()):
+            return "Ah, my Guardian! We're currently in Season of the Wish - the season of wishes granted and mysteries revealed. What adventures shall we pursue in this magical time?"
+
+        # General response
+        system_prompt = (
+            "You are the Ghost from Destiny 2. Respond briefly in character. "
+            "Keep responses short and simple like in the game."
+        )
+        return send_with_system(system_prompt, message)
+
+    def _handle_command_segment(self, segment: str) -> str:
+        """Route a single command-like segment to the appropriate handler."""
+        msg = segment.strip()
+        low = msg.lower()
+        # Combined transfer + equip
+        if ("transfer" in low or "move" in low) and ("equip" in low):
+            explicit_from_vault = ("from my vault" in low)
+            m_equip = re.search(r"\bequip\s+(?:my\s+)?(.+)$", msg, re.IGNORECASE)
+            equip_name = m_equip.group(1).strip() if m_equip else None
+            m_transfer = re.search(r"(?:transfer|move)\s+(?:my\s+)?(.+?)(?=\s+(?:from|to|and)\b|$)", msg, re.IGNORECASE)
+            transfer_name = m_transfer.group(1).strip() if m_transfer else None
+            name = None
+            if equip_name and equip_name.lower() not in {"it", "it back"}:
+                name = equip_name
+            elif transfer_name:
+                name = transfer_name
+            elif equip_name:
+                name = equip_name
+            if name:
+                return self._handle_transfer_then_equip(name, explicit_from_vault)
+        # Pronoun transfer
+        m_pr = re.search(r"\b(?:transfer|move)\s+it\s+(?:back\s+)?(?:to\s+)?(?:my\s+)?(vault|inventory)\b", msg, re.IGNORECASE)
+        if m_pr:
+            return self._handle_transfer_pronoun(m_pr.group(1).lower())
+        # Transfer to vault
+        m_tv = re.search(r"\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+(?:back\s+)?(?:to\s+)?(?:my\s+)?vault\b", msg, re.IGNORECASE)
+        if m_tv:
+            return self._handle_vault_item(m_tv.group(1).strip())
+        # Transfer from vault
+        m_fv = re.search(r"\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+from\s+my\s+vault\b", msg, re.IGNORECASE)
+        if m_fv:
+            return self._handle_transfer_from_vault(m_fv.group(1).strip())
+        # Transfer to inventory
+        m_ti = re.search(r"\b(?:transfer|move)\s+(?:my\s+)?(.+?)\s+(?:to\s+)?(?:my\s+)?(?:inventory|invetory|inventorie)\b", msg, re.IGNORECASE)
+        if m_ti:
+            return self._handle_transfer_from_vault(m_ti.group(1).strip())
+        # Pull from postmaster
+        m_pm = re.search(r"\b(?:pull|get|transfer|move)\s+(?:my\s+)?(.+?)\s+from\s+my\s+post[-\s]?master\b", msg, re.IGNORECASE)
+        if m_pm:
+            return self._handle_pull_from_postmaster(m_pm.group(1).strip())
+        # Dismantle
+        m_dis = re.search(r"\bdismantle\s+(?:my\s+)?(.+)$", msg, re.IGNORECASE)
+        if m_dis:
+            return self._handle_dismantle_item(m_dis.group(1).strip())
+        # Equip
+        m_eq = re.search(r"\bequip\s+(?:my\s+)?(.+)$", msg, re.IGNORECASE)
+        if m_eq:
+            return self._handle_equip_item(m_eq.group(1).strip())
+        # Vault <name>
+        m_v = re.search(r"\bvault\s+(?:my\s+)?(.+)$", msg, re.IGNORECASE)
+        if m_v:
+            return self._handle_vault_item(m_v.group(1).strip())
+        return ""
+
+
+    # ------------------------------
+    # Fuzzy match helpers
+    # ------------------------------
+    def _normalize_text(self, s: str) -> str:
+        s = (s or "").lower()
+        s = re.sub(r"[\-_/]+", " ", s)
+        s = re.sub(r"[^a-z0-9\s]", "", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    def _similarity(self, a: str, b: str) -> float:
+        a_n = self._normalize_text(a)
+        b_n = self._normalize_text(b)
+        if not a_n or not b_n:
+            return 0.0
+        # Sequence ratio
+        seq = difflib.SequenceMatcher(None, a_n, b_n).ratio()
+        # Token set Jaccard
+        ta, tb = set(a_n.split()), set(b_n.split())
+        inter = len(ta & tb)
+        union = len(ta | tb) or 1
+        jacc = inter / union
+        # Weighted blend favors sequence, keeps token overlap influence
+        return 0.7 * seq + 0.3 * jacc
+
+    def _get_item_name(self, item_hash: int | str) -> str:
+        try:
+            # Use client's cached definition helper to avoid repeated network calls
+            item_def = self.bungie.get_inventory_item_definition(item_hash)
+            return (
+                item_def.get("Response", {})
+                .get("displayProperties", {})
+                .get("name", "")
+            )
+        except Exception:
+            return ""
+
+    def _bucket_location_safe(self, bucket_hash: int | str) -> int | None:
+        try:
+            bh = int(bucket_hash)
+        except Exception:
+            return None
+        try:
+            if bh in self._bucket_loc_cache:
+                return self._bucket_loc_cache[bh]
+            data = self.bungie.get_entity("DestinyInventoryBucketDefinition", bh)
+            loc = (
+                data.get("Response", {})
+                .get("location")
+            )
+            if isinstance(loc, int):
+                self._bucket_loc_cache[bh] = loc
+                return loc
+        except Exception:
+            pass
+        return None
+
+    def _item_bucket_location(self, item_hash: int | str) -> int | None:
+        try:
+            idef = self.bungie.get_inventory_item_definition(item_hash)
+            bh = (
+                idef.get("Response", {})
+                .get("inventory", {})
+                .get("bucketTypeHash")
+            )
+            if bh is None:
+                return None
+            return self._bucket_location_safe(bh)
+        except Exception:
+            return None
+
+    def _is_postmaster_bucket(self, bucket_hash: int | str) -> bool:
+        try:
+            bh = int(bucket_hash)
+            return bh == 215593132  # Postmaster bucket hash
+        except Exception:
+            return False
+
+    def _active_character_id(self, profile: dict) -> str | None:
+        try:
+            chars = (
+                profile.get("Response", {})
+                .get("characters", {})
+                .get("data", {})
+            )
+            if not isinstance(chars, dict) or not chars:
+                return None
+            # Pick most recently played character
+            best_cid = None
+            best_dt = None
+            import datetime as _dt
+            for cid, cdata in chars.items():
+                dt_s = cdata.get("dateLastPlayed") or cdata.get("dateLastPlayed", "")
+                try:
+                    dt = _dt.datetime.fromisoformat(dt_s.replace("Z", "+00:00")) if dt_s else None
+                except Exception:
+                    dt = None
+                if best_dt is None or (dt and dt > best_dt):
+                    best_dt = dt
+                    best_cid = cid
+            return best_cid or list(chars.keys())[0]
+        except Exception:
+            return None
+        if bh in self._postmaster_bucket_cache:
+            return self._postmaster_bucket_cache[bh]
+        try:
+            data = self.bungie.get_entity("DestinyInventoryBucketDefinition", bh)
+            resp = data.get("Response", {}) if isinstance(data, dict) else {}
+            name = (
+                resp.get("displayProperties", {})
+                .get("name", "")
+            )
+            loc = resp.get("location")
+            is_pm = False
+            if isinstance(name, str) and name:
+                low = name.lower()
+                if ("postmaster" in low) or ("lost" in low and "item" in low):
+                    is_pm = True
+            if not is_pm and isinstance(loc, int) and loc == 4:
+                is_pm = True
+            self._postmaster_bucket_cache[bh] = is_pm
+            return is_pm
+        except Exception:
+            return False
+
+    def _best_vault_match(self, profile: dict, query: str) -> tuple[str | None, str | None, int | str | None, str | None]:
+        """Return (item_instance_id, character_id, item_hash, item_name) best matching query from vault."""
+        best_score = 0.0
+        best_instance = None
+        best_char = None
+        best_hash = None
+        best_name = None
+        items = (
+            profile.get("Response", {})
+            .get("profileInventory", {})
+            .get("data", {})
+            .get("items", [])
+        )
+        for it in items:
+            try:
+                loc = it.get("location")
+                if loc is None:
+                    # Fallback: resolve from bucketHash
+                    bh = it.get("bucketHash")
+                    if bh is None:
+                        continue
+                    loc = self._bucket_location_safe(bh)
+                if loc != 2:
+                    continue
+                ih = it.get("itemHash")
+                if ih is None:
+                    continue
+                name = self._get_item_name(ih)
+                if not name:
+                    continue
+                score = self._similarity(name, query)
+                if score >= 0.75 and score > best_score:
+                    best_score = score
+                    best_instance = it.get("itemInstanceId")
+                    best_char = None
+                    best_hash = ih
+                    best_name = name
+                    if best_score >= 0.96:
+                        break
+            except Exception:
+                continue
+        return best_instance, best_char, best_hash, best_name
+
+    def _best_inventory_match(self, profile: dict, query: str) -> tuple[str | None, str | None, int | str | None, str | None]:
+        """Return (item_instance_id, character_id, item_hash, item_name) best matching query from character inventories."""
+        best_score = 0.0
+        best_instance = None
+        best_char = None
+        best_hash = None
+        best_name = None
+        invs = (
+            profile.get("Response", {})
+            .get("characterInventories", {})
+            .get("data", {})
+        )
+        for char_id, cdata in invs.items():
+            for it in cdata.get("items", []):
+                try:
+                    ih = it.get("itemHash")
+                    if ih is None:
+                        continue
+                    name = self._get_item_name(ih)
+                    if not name:
+                        continue
+                    score = self._similarity(name, query)
+                    if score >= 0.75 and score > best_score:
+                        best_score = score
+                        best_instance = it.get("itemInstanceId")
+                        best_char = char_id
+                        best_hash = ih
+                        best_name = name
+                        if best_score >= 0.96:
+                            break
+                except Exception:
+                    continue
+            if best_score >= 0.96:
+                break
+        return best_instance, best_char, best_hash, best_name
+
+    def _best_postmaster_match(self, profile: dict, query: str) -> tuple[str | None, str | None, int | str | None, str | None]:
+        """Return (item_instance_id, character_id, item_hash, item_name) best matching query from postmaster buckets."""
+        best_score = 0.0
+        best_instance = None
+        best_char = None
+        best_hash = None
+        best_name = None
+        # Check per-character inventories for Postmaster: location==4 or bucket identified as Postmaster/Lost Items
+        invs = (
+            profile.get("Response", {})
+            .get("characterInventories", {})
+            .get("data", {})
+        )
+        for char_id, cdata in invs.items():
+            for it in cdata.get("items", []):
+                try:
+                    loc = it.get("location")
+                    bh = it.get("bucketHash")
+                    if loc is None and bh is not None:
+                        loc = self._bucket_location_safe(bh)
+                    is_pm = (loc == 4) or (bh is not None and self._is_postmaster_bucket(bh))
+                    if not is_pm:
+                        continue
+                    ih = it.get("itemHash")
+                    if ih is None:
+                        continue
+                    name = self._get_item_name(ih)
+                    if not name:
+                        continue
+                    score = self._similarity(name, query)
+                    if score >= 0.75 and score > best_score:
+                        best_score = score
+                        best_instance = it.get("itemInstanceId")
+                        best_char = char_id
+                        best_hash = ih
+                        best_name = name
+                        if best_score >= 0.96:
+                            break
+                except Exception:
+                    continue
+            if best_score >= 0.96:
+                break
+        # Fallback: check profile inventory for postmaster buckets if needed
+        if not best_instance:
+            items = (
+                profile.get("Response", {})
+                .get("profileInventory", {})
+                .get("data", {})
+                .get("items", [])
+            )
+            for it in items:
+                try:
+                    loc = it.get("location")
+                    bh = it.get("bucketHash")
+                    if loc is None and bh is not None:
+                        loc = self._bucket_location_safe(bh)
+                    is_pm = (loc == 4) or (bh is not None and self._is_postmaster_bucket(bh))
+                    if not is_pm:
+                        continue
+                    ih = it.get("itemHash")
+                    if ih is None:
+                        continue
+                    name = self._get_item_name(ih)
+                    if not name:
+                        continue
+                    score = self._similarity(name, query)
+                    if score >= 0.75 and score > best_score:
+                        best_score = score
+                        best_instance = it.get("itemInstanceId")
+                        best_hash = ih
+                        best_name = name
+                        # character unknown in this path
+                except Exception:
+                    continue
+        return best_instance, best_char, best_hash, best_name
+
+    def _find_least_valuable_item(self, profile: dict, bucket_hash: int, exclude_instance_id: str | None = None) -> dict | None:
+        """Find the least valuable item in the given bucket across all characters and vault."""
+        least_power = float('inf')
+        least_item = None
+        instances = profile.get("Response", {}).get("itemComponents", {}).get("instances", {}).get("data", {})
+
+        # Check character inventories
+        cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+        for cid, cdata in cinv.items():
+            for it in cdata.get("items", []):
+                if it.get("bucketHash") == bucket_hash and it.get("itemInstanceId") != exclude_instance_id:
+                    iid = it.get("itemInstanceId")
+                    if iid and iid in instances:
+                        power = instances[iid].get("primaryStat", {}).get("value", 0)
+                        if power < least_power:
+                            least_power = power
+                            least_item = {**it, "character_id": cid}
+
+        # Check vault
+        vinv = profile.get("Response", {}).get("profileInventory", {}).get("data", {}).get("items", [])
+        for it in vinv:
+            if it.get("bucketHash") == bucket_hash and it.get("itemInstanceId") != exclude_instance_id:
+                iid = it.get("itemInstanceId")
+                if iid and iid in instances:
+                    power = instances[iid].get("primaryStat", {}).get("value", 0)
+                    if power < least_power:
+                        least_power = power
+                        least_item = {**it, "character_id": None}
+
+        return least_item
+
+    def _best_equipped_match(self, profile: dict, query: str) -> tuple[str | None, str | None, int | str | None, str | None]:
+        """Return (item_instance_id, character_id, item_hash, item_name) from equipped items best matching query."""
+        best_score = 0.0
+        best_instance = None
+        best_char = None
+        best_hash = None
+        best_name = None
+        eq = (
+            profile.get("Response", {})
+            .get("characterEquipment", {})
+            .get("data", {})
+        )
+        for char_id, cdata in eq.items():
+            for it in cdata.get("items", []):
+                try:
+                    ih = it.get("itemHash")
+                    if ih is None:
+                        continue
+                    name = self._get_item_name(ih)
+                    if not name:
+                        continue
+                    score = self._similarity(name, query)
+                    if score > 0.8 and score > best_score:
+                        best_score = score
+                        best_instance = it.get("itemInstanceId")
+                        best_char = char_id
+                        best_hash = ih
+                        best_name = name
+                        if best_score >= 0.96:
+                            break
+                except Exception:
+                    continue
+            if best_score >= 0.96:
+                break
+        return best_instance, best_char, best_hash, best_name
+
+    def _handle_vault_item(self, item_name: str) -> str:
+        """Handle vaulting an item."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get character inventories and equipment and profile inventory
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 107, 111, 112])
+            # Warm up definitions in background for speed
+            try:
+                hashes = set()
+                cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                for _, cdata in cinv.items():
+                    for it in cdata.get("items", []):
+                        ih = it.get("itemHash")
+                        if ih is not None:
+                            hashes.add(ih)
+                self._warmup_defs_async(hashes)
+            except Exception:
+                pass
+
+            # Fuzzy search in character inventories
+            item_instance_id, character_id, item_hash, _ = self._best_inventory_match(profile, item_name)
+
+            if not item_instance_id:
+                # Check if it's already in vault
+                v_inst, _, _, _ = self._best_vault_match(profile, item_name)
+                if v_inst:
+                    return f"{item_name} is already in your vault, Guardian."
+                # Check if it's equipped
+                e_inst, e_char, _, _ = self._best_equipped_match(profile, item_name)
+                if e_inst:
+                    return (
+                        f"I found '{item_name}' equipped on a character, Guardian. Equip another item first, then ask me to vault it, "
+                        f"or say 'equip <other item>, then vault {item_name}'."
+                    )
+                return f"I couldn't find '{item_name}' in your inventory or vault, Guardian."
+
+            # Vault the item (transfer to vault)
+            transfer_result = self.bungie.transfer_item(
+                membership_type=destiny_membership_type,
+                character_id=character_id,
+                item_id=item_instance_id,
+                item_reference_hash=item_hash,
+                stack_size=1,
+                transfer_to_vault=True,
+            )
+
+            if transfer_result.get("ErrorCode") == 1:
+                # Remember last item for pronoun-based follow-ups
+                self._last_item = {
+                    "name": item_name,
+                    "instance_id": item_instance_id,
+                    "character_id": character_id,
+                    "hash": item_hash,
+                }
+                return f"I've successfully vaulted your {item_name}, Guardian. It's now safely stored away."
+            else:
+                return f"Sorry Guardian, I couldn't vault your {item_name}. The transfer failed."
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while trying to vault your item: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while trying to vault your item: {str(e)}"
+
+    def _handle_transfer_from_vault(self, item_name: str) -> str:
+        """Handle transferring an item from vault to inventory."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile with inventory and character data
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 107, 111, 112])
+            # Warm up definitions in background
+            try:
+                hashes = set()
+                pinv = profile.get("Response", {}).get("profileInventory", {}).get("data", {}).get("items", [])
+                for it in pinv:
+                    ih = it.get("itemHash")
+                    if ih is not None:
+                        hashes.add(ih)
+                self._warmup_defs_async(hashes)
+            except Exception:
+                pass
+
+            # Fuzzy search for the item in vault (location 2)
+            item_instance_id, _, item_hash, _ = self._best_vault_match(profile, item_name)
+
+            if not item_instance_id:
+                return f"I couldn't find '{item_name}' in your vault, Guardian. Make sure the name is spelled correctly."
+
+            # Get the first available character to transfer to
+            character_id = None
+            if "characters" in profile.get("Response", {}):
+                character_id = list(profile["Response"]["characters"]["data"].keys())[0]
+
+            if not character_id:
+                return "I couldn't find an active character to transfer the item to, Guardian."
+
+            # Transfer the item from vault to character inventory
+            transfer_result = self.bungie.transfer_item(
+                membership_type=destiny_membership_type,
+                character_id=character_id,
+                item_id=item_instance_id,
+                item_reference_hash=item_hash,
+                stack_size=1,
+                transfer_to_vault=False  # False means transfer TO character
+            )
+
+            if transfer_result.get("ErrorCode") == 1:
+                # Remember last item
+                self._last_item = {
+                    "name": item_name,
+                    "instance_id": item_instance_id,
+                    "character_id": character_id,
+                    "hash": item_hash,
+                }
+                return f"I've successfully transferred your {item_name} to your inventory, Guardian. It's ready for use."
+            else:
+                return f"Sorry Guardian, I couldn't transfer your {item_name}. The transfer failed."
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while trying to transfer your item: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while trying to transfer your item: {str(e)}"
+
+    def _handle_transfer_to_character(self, item_name: str, target_class: str) -> str:
+        """Handle transferring an item to a specific character."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile with inventory, character data, and item instances
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 107, 111, 112])
+            # Warm up definitions in background
+            try:
+                hashes = set()
+                pinv = profile.get("Response", {}).get("profileInventory", {}).get("data", {}).get("items", [])
+                for it in pinv:
+                    ih = it.get("itemHash")
+                    if ih is not None:
+                        hashes.add(ih)
+                cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                for _, cdata in cinv.items():
+                    for it in cdata.get("items", []):
+                        ih = it.get("itemHash")
+                        if ih is not None:
+                            hashes.add(ih)
+                ceq = profile.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                for _, cdata in ceq.items():
+                    for it in cdata.get("items", []):
+                        ih = it.get("itemHash")
+                        if ih is not None:
+                            hashes.add(ih)
+                self._warmup_defs_async(hashes)
+            except Exception:
+                pass
+
+            # Find target character
+            chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+            target_cid = None
+            target_display_class = target_class
+            if target_class == "me":
+                target_cid = self._active_character_id(profile)
+                if target_cid and target_cid in chars:
+                    class_type = chars[target_cid].get("classType")
+                    class_names = {0: "Titan", 1: "Hunter", 2: "Warlock"}
+                    target_display_class = class_names.get(class_type, "Guardian").lower()
+            else:
+                class_map = {"titan": 0, "hunter": 1, "warlock": 2}
+                target_class_type = class_map.get(target_class)
+                if target_class_type is not None:
+                    for cid, cdata in chars.items():
+                        if cdata.get("classType") == target_class_type:
+                            target_cid = cid
+                            break
+            if not target_cid:
+                return f"I couldn't find your {target_class} character, Guardian."
+
+            # Initialize variables
+            item_instance_id = None
+            item_hash = None
+            did_move = False
+            source_location = None
+            source_cid = None
+            actual_item_name = None
+
+            # Helper: free one slot in target inventory for this item's bucket (used when destination is full)
+            def _free_slot_on_target(for_item_hash: int | str | None) -> bool:
+                try:
+                    if for_item_hash is None:
+                        return False
+                    idef = self.bungie.get_inventory_item_definition(for_item_hash)
+                    bucket_hash = (
+                        idef.get("Response", {})
+                        .get("inventory", {})
+                        .get("bucketTypeHash")
+                    )
+                    if not bucket_hash:
+                        return False
+                    profx = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205, 300])
+                    invx = profx.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    instances = (
+                        profx.get("Response", {})
+                        .get("itemComponents", {})
+                        .get("instances", {})
+                        .get("data", {})
+                    )
+                    best = None  # (tierType, power, instanceId, itemHash)
+                    for itx in (invx.get(target_cid, {}) or {}).get("items", []):
+                        if itx.get("bucketHash") != bucket_hash:
+                            continue
+                        ihx = itx.get("itemHash")
+                        try:
+                            idef2 = self.bungie.get_inventory_item_definition(ihx)
+                            inv2 = idef2.get("Response", {}).get("inventory", {})
+                            tier = inv2.get("tierType", 999)
+                        except Exception:
+                            tier = 999
+                        iid2 = itx.get("itemInstanceId")
+                        power = 9999
+                        if iid2 and str(iid2) in instances:
+                            power = instances[str(iid2)].get("primaryStat", {}).get("value", 9999)
+                        cand = (int(tier) if isinstance(tier, int) else 999, int(power), iid2, ihx)
+                        if best is None or cand < best:
+                            best = cand
+                    if best is None or best[2] is None:
+                        return False
+                    _, _, rid, rhash = best
+                    tr_out = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=target_cid,
+                        item_id=str(rid),
+                        item_reference_hash=int(rhash),
+                        stack_size=1,
+                        transfer_to_vault=True,
+                    )
+                    return tr_out.get("ErrorCode") == 1 if isinstance(tr_out, dict) else True
+                except Exception:
+                    return False
+
+            # First, try to find the item in vault
+            item_instance_id, source_cid, item_hash, actual_item_name = self._best_vault_match(profile, item_name)
+            if item_instance_id:
+                item_name = actual_item_name or item_name
+                source_location = "vault"
+
+            if not item_instance_id:
+                # Try to find in any character's inventory
+                item_instance_id, source_cid, item_hash, actual_item_name = self._best_inventory_match(profile, item_name)
+                if item_instance_id:
+                    item_name = actual_item_name or item_name
+                    source_location = "inventory"
+                else:
+                    # Try to find in equipped items
+                    item_instance_id, source_cid, item_hash, actual_item_name = self._best_equipped_match(profile, item_name)
+                    if item_instance_id:
+                        item_name = actual_item_name or item_name
+                        source_location = "equipped"
+                    else:
+                        # Try to find in postmaster
+                        item_instance_id, source_cid, item_hash, actual_item_name = self._best_postmaster_match(profile, item_name)
+                        if item_instance_id:
+                            item_name = actual_item_name or item_name
+                            source_location = "postmaster"
+                
+                # Handle equipped items
+                if source_location == "equipped":
+                    # Unequip the item
+                    try:
+                        item_def = self.bungie.get_inventory_item_definition(item_hash)
+                        bucket_hash = item_def.get("Response", {}).get("inventory", {}).get("bucketTypeHash")
+                        if bucket_hash:
+                            # Find another item in the same bucket on the same character
+                            invs = profile.get("Response", {}).get("characterInventories", {}).get("data", {}).get(source_cid, {}).get("items", [])
+                            other_item = None
+                            for it in invs:
+                                bh = it.get("bucketHash")
+                                if bh == bucket_hash and it.get("itemInstanceId") != item_instance_id:
+                                    other_item = it
+                                    break
+                            if other_item:
+                                equip_result = self.bungie.equip_item(
+                                    membership_type=destiny_membership_type,
+                                    character_id=source_cid,
+                                    item_id=other_item.get("itemInstanceId")
+                                )
+                                if equip_result.get("ErrorCode") == 1:
+                                    source_location = "inventory"
+                                else:
+                                    return f"Sorry Guardian, I couldn't unequip {item_name}."
+                            else:
+                                return f"Sorry Guardian, no other item to equip in that slot for {item_name}."
+                    except Exception as e:
+                        return f"Sorry Guardian, error unequipping {item_name}: {str(e)}"
+                
+                if item_instance_id and source_cid == target_cid:
+                    try:
+                        self._last_item = {
+                            "name": item_name,
+                            "instance_id": item_instance_id,
+                            "character_id": target_cid,
+                            "hash": item_hash,
+                        }
+                    except Exception:
+                        pass
+                    return f"{item_name} is already on your {target_display_class}, Guardian."
+
+            if not item_instance_id:
+                return f"I couldn't find '{item_name}' in your vault or any character's inventory, Guardian."
+
+            # Handle postmaster items
+            if source_location == "postmaster":
+                # Pull from postmaster to inventory
+                pull_result = self.bungie.pull_from_postmaster(
+                    membership_type=destiny_membership_type,
+                    character_id=source_cid,
+                    item_id=item_instance_id,
+                    item_reference_hash=item_hash,
+                    stack_size=1
+                )
+                if pull_result.get("ErrorCode") != 1:
+                    return f"Sorry Guardian, I couldn't pull {item_name} from the postmaster."
+                # Now it's in inventory
+                source_location = "inventory"
+
+            # If item is in another character's inventory, transfer to vault first
+            if source_location == "inventory" and source_cid != target_cid:
+                transfer_result = self.bungie.transfer_item(
+                    membership_type=destiny_membership_type,
+                    character_id=source_cid,
+                    item_id=item_instance_id,
+                    item_reference_hash=item_hash,
+                    stack_size=1,
+                    transfer_to_vault=True  # Transfer to vault
+                )
+                if transfer_result.get("ErrorCode") != 1:
+                    return f"Sorry Guardian, I couldn't transfer {item_name} from your current character to the vault."
+
+            # Now transfer from vault to target character (handle full slot by freeing one)
+            try:
+                transfer_result = self.bungie.transfer_item(
+                    membership_type=destiny_membership_type,
+                    character_id=target_cid,
+                    item_id=item_instance_id,
+                    item_reference_hash=item_hash,
+                    stack_size=1,
+                    transfer_to_vault=False  # Transfer to character
+                )
+            except BungieAPIError as be:
+                txt = str(be)
+                if ("DestinyNoRoomInDestination" in txt) or ('"ErrorCode":1642' in txt) or ("ErrorCode 1642" in txt):
+                    if _free_slot_on_target(item_hash):
+                        transfer_result = self.bungie.transfer_item(
+                            membership_type=destiny_membership_type,
+                            character_id=target_cid,
+                            item_id=item_instance_id,
+                            item_reference_hash=item_hash,
+                            stack_size=1,
+                            transfer_to_vault=False,
+                        )
+                    else:
+                        return f"Your {target_display_class} has no free slots for {item_name}, Guardian. I couldn't make room."
+                else:
+                    raise
+
+            if transfer_result.get("ErrorCode") == 1:
+                # Remember last item
+                self._last_item = {
+                    "name": item_name,
+                    "instance_id": item_instance_id,
+                    "character_id": target_cid,
+                    "hash": item_hash,
+                }
+                return f"I've successfully transferred your {item_name} to your {target_display_class}, Guardian. It's ready for action."
+            else:
+                return f"Sorry Guardian, I couldn't transfer your {item_name} to your {target_display_class}. The transfer failed."
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while trying to transfer your item: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while trying to transfer your item: {str(e)}"
+
+    def _handle_transfer_between_characters(self, item_name: str, from_class: str, to_class: str) -> str:
+        """Handle transferring an item between specific characters."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile with inventory, character data, and item instances
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 107, 111, 112])
+            # Warm up definitions in background
+            try:
+                hashes = set()
+                cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                for _, cdata in cinv.items():
+                    for it in cdata.get("items", []):
+                        ih = it.get("itemHash")
+                        if ih is not None:
+                            hashes.add(ih)
+                ceq = profile.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                for _, cdata in ceq.items():
+                    for it in cdata.get("items", []):
+                        ih = it.get("itemHash")
+                        if ih is not None:
+                            hashes.add(ih)
+                self._warmup_defs_async(hashes)
+            except Exception:
+                pass
+
+            # Find from and to characters
+            chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+            from_cid = None
+            to_cid = None
+            class_map = {"titan": 0, "hunter": 1, "warlock": 2}
+            from_class_type = class_map.get(from_class)
+            to_class_type = class_map.get(to_class)
+            for cid, cdata in chars.items():
+                if cdata.get("classType") == from_class_type:
+                    from_cid = cid
+                if cdata.get("classType") == to_class_type:
+                    to_cid = cid
+            if not from_cid:
+                return f"I couldn't find your {from_class} character, Guardian."
+            if not to_cid:
+                return f"I couldn't find your {to_class} character, Guardian."
+            if from_cid == to_cid:
+                return f"Your {from_class} is the same as your {to_class}, Guardian. No transfer needed."
+
+            # Find the item in the from character's inventory or equipped
+            item_instance_id = None
+            item_hash = None
+            source_location = None
+            cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+            ceq = profile.get("Response", {}).get("characterEquipment", {}).get("data", {})
+            # Check inventory
+            if from_cid in cinv:
+                for it in cinv[from_cid].get("items", []):
+                    ih = it.get("itemHash")
+                    if ih is None:
+                        continue
+                    name = self._get_item_name(ih)
+                    if name and self._similarity(name, item_name) >= 0.75:
+                        item_instance_id = it.get("itemInstanceId")
+                        item_hash = ih
+                        source_location = "inventory"
+                        break
+            # Check equipped if not found
+            if not item_instance_id and from_cid in ceq:
+                for it in ceq[from_cid].get("items", []):
+                    ih = it.get("itemHash")
+                    if ih is None:
+                        continue
+                    name = self._get_item_name(ih)
+                    if name and self._similarity(name, item_name) >= 0.75:
+                        item_instance_id = it.get("itemInstanceId")
+                        item_hash = ih
+                        source_location = "equipped"
+                        break
+
+            if not item_instance_id:
+                return f"I couldn't find '{item_name}' on your {from_class}, Guardian."
+
+            # If equipped, unequip
+            if source_location == "equipped":
+                item_def = self.bungie.get_inventory_item_definition(item_hash)
+                bucket_hash = item_def.get("Response", {}).get("inventory", {}).get("bucketTypeHash")
+                if bucket_hash:
+                    # Find another item in the same bucket on the same character
+                    other_item = None
+                    if from_cid in cinv:
+                        for it in cinv[from_cid].get("items", []):
+                            bh = it.get("bucketHash")
+                            if bh == bucket_hash and it.get("itemInstanceId") != item_instance_id:
+                                other_item = it
+                                break
+                    if not other_item:
+                        # Find globally the least valuable item in that bucket
+                        least_valuable = self._find_least_valuable_item(profile, bucket_hash, exclude_instance_id=item_instance_id)
+                        if least_valuable:
+                            other_item = least_valuable
+                            # Transfer it to from_cid if not already there
+                            if least_valuable.get("character_id") != from_cid:
+                                if least_valuable.get("character_id"):
+                                    # Transfer from other character to vault
+                                    self.bungie.transfer_item(
+                                        membership_type=destiny_membership_type,
+                                        character_id=least_valuable["character_id"],
+                                        item_id=least_valuable["itemInstanceId"],
+                                        item_reference_hash=least_valuable["itemHash"],
+                                        stack_size=1,
+                                        transfer_to_vault=True
+                                    )
+                                # Transfer from vault to from_cid
+                                self.bungie.transfer_item(
+                                    membership_type=destiny_membership_type,
+                                    character_id=from_cid,
+                                    item_id=least_valuable["itemInstanceId"],
+                                    item_reference_hash=least_valuable["itemHash"],
+                                    stack_size=1,
+                                    transfer_to_vault=False
+                                )
+                    if other_item:
+                        equip_result = self.bungie.equip_item(
+                            membership_type=destiny_membership_type,
+                            character_id=from_cid,
+                            item_id=other_item["itemInstanceId"]
+                        )
+                        if equip_result.get("ErrorCode") == 1:
+                            source_location = "inventory"
+                        else:
+                            return f"Sorry Guardian, I couldn't unequip {item_name}."
+                    else:
+                        return f"Sorry Guardian, no replacement item found for {item_name}."
+
+            # Transfer from from_cid to vault
+            transfer_result = self.bungie.transfer_item(
+                membership_type=destiny_membership_type,
+                character_id=from_cid,
+                item_id=item_instance_id,
+                item_reference_hash=item_hash,
+                stack_size=1,
+                transfer_to_vault=True
+            )
+            if transfer_result.get("ErrorCode") != 1:
+                return f"Sorry Guardian, I couldn't transfer {item_name} from your {from_class} to the vault."
+
+            # Transfer from vault to to_cid
+            transfer_result = self.bungie.transfer_item(
+                membership_type=destiny_membership_type,
+                character_id=to_cid,
+                item_id=item_instance_id,
+                item_reference_hash=item_hash,
+                stack_size=1,
+                transfer_to_vault=False
+            )
+
+            if transfer_result.get("ErrorCode") == 1:
+                # Remember last item
+                self._last_item = {
+                    "name": item_name,
+                    "instance_id": item_instance_id,
+                    "character_id": to_cid,
+                    "hash": item_hash,
+                }
+                return f"I've successfully transferred your {item_name} from your {from_class} to your {to_class}, Guardian. It's ready for action."
+            else:
+                return f"Sorry Guardian, I couldn't transfer your {item_name} to your {to_class}. The transfer failed."
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while trying to transfer your item: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while trying to transfer your item: {str(e)}"
+
+    def _handle_equip_item(self, item_name: str, class_target: str | None = None) -> str:
+        """Handle equipping an item."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get characters, inventories, equipment, and profile inventory (vault)
+            profile = self.bungie.get_profile(
+                destiny_membership_type,
+                destiny_membership_id,
+                [102, 200, 201, 205],
+            )
+            # Warm up definitions in background
+            try:
+                hashes = set()
+                # From vault/profile inventory
+                pinv = (
+                    profile.get("Response", {})
+                    .get("profileInventory", {})
+                    .get("data", {})
+                    .get("items", [])
+                )
+                for it in pinv:
+                    ih = it.get("itemHash")
+                    if ih is not None:
+                        hashes.add(ih)
+                cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                for _, cdata in cinv.items():
+                    for it in cdata.get("items", []):
+                        ih = it.get("itemHash")
+                        if ih is not None:
+                            hashes.add(ih)
+                self._warmup_defs_async(hashes)
+            except Exception:
+                pass
+
+            # Decide target character: requested class -> most recently played
+            target_cid = None
+            if class_target:
+                try:
+                    class_map = {"titan": 0, "hunter": 1, "warlock": 2}
+                    want = class_map.get(class_target)
+                    chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+                    if want is not None:
+                        for cid, cdata in (chars or {}).items():
+                            if cdata.get("classType") == want:
+                                target_cid = cid
+                                break
+                except Exception:
+                    target_cid = None
+            if not target_cid:
+                target_cid = self._active_character_id(profile)
+            if not target_cid:
+                chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+                if not chars:
+                    return "I couldn't find a character to equip the item on, Guardian."
+                target_cid = list(chars.keys())[0]
+
+            # Helper: free one slot in target inventory for this item's bucket (when destination is full)
+            def _free_slot_on_target(for_item_hash: int | str | None) -> bool:
+                try:
+                    if for_item_hash is None:
+                        return False
+                    idef = self.bungie.get_inventory_item_definition(for_item_hash)
+                    bucket_hash = (
+                        idef.get("Response", {})
+                        .get("inventory", {})
+                        .get("bucketTypeHash")
+                    )
+                    if not bucket_hash:
+                        return False
+                    profx = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205, 300])
+                    invx = profx.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    instances = (
+                        profx.get("Response", {})
+                        .get("itemComponents", {})
+                        .get("instances", {})
+                        .get("data", {})
+                    )
+                    best = None  # (tierType, power, instanceId, itemHash)
+                    for itx in (invx.get(target_cid, {}) or {}).get("items", []):
+                        if itx.get("bucketHash") != bucket_hash:
+                            continue
+                        ihx = itx.get("itemHash")
+                        try:
+                            idef2 = self.bungie.get_inventory_item_definition(ihx)
+                            inv2 = idef2.get("Response", {}).get("inventory", {})
+                            tier = inv2.get("tierType", 999)
+                        except Exception:
+                            tier = 999
+                        iid2 = itx.get("itemInstanceId")
+                        power = 9999
+                        if iid2 and str(iid2) in instances:
+                            power = instances[str(iid2)].get("primaryStat", {}).get("value", 9999)
+                        cand = (int(tier) if isinstance(tier, int) else 999, int(power), iid2, ihx)
+                        if best is None or cand < best:
+                            best = cand
+                    if best is None or best[2] is None:
+                        return False
+                    _, _, rid, rhash = best
+                    tr_out = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=target_cid,
+                        item_id=str(rid),
+                        item_reference_hash=int(rhash),
+                        stack_size=1,
+                        transfer_to_vault=True,
+                    )
+                    return tr_out.get("ErrorCode") == 1 if isinstance(tr_out, dict) else True
+                except Exception:
+                    return False
+
+            # Prepare local state used across branches
+            item_instance_id: str | None = None
+            item_hash: int | str | None = None
+            did_move: bool = False
+
+            # If already equipped on target character, report success
+            eq_iid, eq_char, eq_hash, _ = self._best_equipped_match(profile, item_name)
+            if eq_iid and eq_char == target_cid:
+                return f"Your {item_name} is already equipped, Guardian."
+
+            # If equipped on another character, inform user (cannot auto-unequip without a replacement)
+            if eq_iid and eq_char and eq_char != target_cid:
+                # Safe swap: equip the lowest-rarity replacement on that character, then move
+                # Determine the requested item's bucket
+                requested_bucket = None
+                try:
+                    idef = self.bungie.get_inventory_item_definition(eq_hash)
+                    requested_bucket = (
+                        idef.get("Response", {})
+                        .get("inventory", {})
+                        .get("bucketTypeHash")
+                    )
+                except Exception:
+                    requested_bucket = None
+
+                # Find lowest rarity candidate in source character inventory for same bucket
+                replacement = None  # tuple(tierType, instanceId, itemHash)
+                try:
+                    cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    for it in (cinv.get(eq_char, {}) or {}).get("items", []):
+                        try:
+                            if it.get("itemInstanceId") == eq_iid:
+                                continue
+                            ih = it.get("itemHash")
+                            if ih is None:
+                                continue
+                            idef = self.bungie.get_inventory_item_definition(ih)
+                            inv = idef.get("Response", {}).get("inventory", {})
+                            bkt = inv.get("bucketTypeHash")
+                            if requested_bucket is not None and bkt != requested_bucket:
+                                continue
+                            tier = inv.get("tierType", 999)
+                            cand = (int(tier) if isinstance(tier, int) else 999, it.get("itemInstanceId"), ih)
+                            if replacement is None or cand[0] < replacement[0]:
+                                replacement = cand
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+                # If none in inventory, try vault: bring a low-tier to source char
+                if replacement is None and requested_bucket is not None:
+                    try:
+                        pinv = (
+                            profile.get("Response", {})
+                            .get("profileInventory", {})
+                            .get("data", {})
+                            .get("items", [])
+                        )
+                        best_vault = None  # (tierType, instanceId, itemHash)
+                        for it in pinv:
+                            try:
+                                ih = it.get("itemHash")
+                                if ih is None:
+                                    continue
+                                idef = self.bungie.get_inventory_item_definition(ih)
+                                inv = idef.get("Response", {}).get("inventory", {})
+                                bkt = inv.get("bucketTypeHash")
+                                if bkt != requested_bucket:
+                                    continue
+                                tier = inv.get("tierType", 999)
+                                cand = (int(tier) if isinstance(tier, int) else 999, it.get("itemInstanceId"), ih)
+                                if best_vault is None or cand[0] < best_vault[0]:
+                                    best_vault = cand
+                            except Exception:
+                                continue
+                        if best_vault is not None:
+                            _, viid2, vhash2 = best_vault
+                            tr_in = self.bungie.transfer_item(
+                                membership_type=destiny_membership_type,
+                                character_id=eq_char,
+                                item_id=viid2,
+                                item_reference_hash=vhash2,
+                                stack_size=1,
+                                transfer_to_vault=False,
+                            )
+                            if tr_in.get("ErrorCode") == 1:
+                                replacement = (0, viid2, vhash2)
+                    except Exception:
+                        pass
+
+                if replacement is None:
+                    return (
+                        f"I found {item_name} equipped on another character, but I couldn't find a replacement weapon to free it. Equip any filler weapon there and ask me again."
+                    )
+
+                # Equip replacement on source character to free the item
+                _, rep_iid, _rep_hash = replacement
+                try:
+                    eq_rep = self.bungie.equip_item(
+                        membership_type=destiny_membership_type,
+                        item_id=str(rep_iid),
+                        character_id=str(eq_char),
+                    )
+                    if eq_rep.get("ErrorCode") != 1:
+                        return f"I tried to equip a replacement to free {item_name}, but Bungie rejected the equip."
+                except Exception as _:
+                    return f"I tried to equip a replacement to free {item_name}, but something went wrong."
+
+                # Move the requested item from source -> vault -> target
+                try:
+                    to_vault = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=str(eq_char),
+                        item_id=str(eq_iid),
+                        item_reference_hash=int(eq_hash),
+                        stack_size=1,
+                        transfer_to_vault=True,
+                    )
+                    if to_vault.get("ErrorCode") != 1:
+                        return f"I equipped a replacement, but couldn't move {item_name} out from that character."
+                    try:
+                        to_target = self.bungie.transfer_item(
+                            membership_type=destiny_membership_type,
+                            character_id=target_cid,
+                            item_id=str(eq_iid),
+                            item_reference_hash=int(eq_hash),
+                            stack_size=1,
+                            transfer_to_vault=False,
+                        )
+                    except BungieAPIError as be:
+                        txt = str(be)
+                        if ("DestinyNoRoomInDestination" in txt) or ('"ErrorCode":1642' in txt) or ("ErrorCode 1642" in txt):
+                            if _free_slot_on_target(eq_hash):
+                                to_target = self.bungie.transfer_item(
+                                    membership_type=destiny_membership_type,
+                                    character_id=target_cid,
+                                    item_id=str(eq_iid),
+                                    item_reference_hash=int(eq_hash),
+                                    stack_size=1,
+                                    transfer_to_vault=False,
+                                )
+                            else:
+                                return f"I moved {item_name} to the vault, but your character has no free slots for it, Guardian."
+                        else:
+                            raise
+                    item_instance_id = eq_iid
+                    item_hash = eq_hash
+                    did_move = True
+                except Exception:
+                    return f"I ran into an issue moving {item_name} between characters, Guardian."
+
+            # If still unknown, try to find in the target character's inventory
+            if not item_instance_id:
+                cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                for it in (cinv.get(target_cid, {}) or {}).get("items", []):
+                    try:
+                        ih = it.get("itemHash")
+                        if ih is None:
+                            continue
+                        name = self._get_item_name(ih)
+                        if not name:
+                            continue
+                        if self._similarity(name, item_name) >= 0.75:
+                            item_instance_id = it.get("itemInstanceId")
+                            item_hash = ih
+                            break
+                    except Exception:
+                        continue
+
+            # If not found in target inventory, try other characters, then vault, then postmaster
+            if not item_instance_id:
+                # Try other character inventories
+                o_iid, o_cid, o_hash, _ = self._best_inventory_match(profile, item_name)
+                if o_iid and o_cid and o_cid != target_cid:
+                    # Cross-character moves must go through the vault: source -> vault -> target
+                    tr_to_vault = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=o_cid,
+                        item_id=o_iid,
+                        item_reference_hash=o_hash,
+                        stack_size=1,
+                        transfer_to_vault=True,
+                    )
+                    if tr_to_vault.get("ErrorCode") != 1:
+                        return f"I tried to move {item_name} from your other character but couldn't send it to the vault, Guardian."
+                    tr_to_target = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=target_cid,
+                        item_id=o_iid,
+                        item_reference_hash=o_hash,
+                        stack_size=1,
+                        transfer_to_vault=False,
+                    )
+                    if tr_to_target.get("ErrorCode") != 1:
+                        return f"I moved {item_name} to the vault but couldn't bring it to your {class_target or 'current character'}, Guardian."
+                    item_instance_id = o_iid
+                    item_hash = o_hash
+                    did_move = True
+                # Try vault/profile inventory
+                if not item_instance_id:
+                    viid, _, vhash, _ = self._best_vault_match(profile, item_name)
+                    if viid and vhash:
+                        try:
+                            tr = self.bungie.transfer_item(
+                                membership_type=destiny_membership_type,
+                                character_id=target_cid,
+                                item_id=viid,
+                                item_reference_hash=vhash,
+                                stack_size=1,
+                                transfer_to_vault=False,
+                            )
+                        except BungieAPIError as be:
+                            txt = str(be)
+                            if ("DestinyNoRoomInDestination" in txt) or ('"ErrorCode":1642' in txt) or ("ErrorCode 1642" in txt):
+                                # Free one slot then retry
+                                if _free_slot_on_target(vhash):
+                                    tr = self.bungie.transfer_item(
+                                        membership_type=destiny_membership_type,
+                                        character_id=target_cid,
+                                        item_id=viid,
+                                        item_reference_hash=vhash,
+                                        stack_size=1,
+                                        transfer_to_vault=False,
+                                    )
+                                else:
+                                    return f"I couldn't make room on your character to transfer {item_name}, Guardian. Try freeing a slot."
+                            else:
+                                raise
+                        item_instance_id = viid
+                        item_hash = vhash
+                        did_move = True
+                # Try postmaster anywhere -> pull to its character, transfer to target
+                if not item_instance_id:
+                    p_iid, p_char, p_hash, _ = self._best_postmaster_match(profile, item_name)
+                    if p_iid and p_char and p_hash:
+                        pr = self.bungie.pull_from_postmaster(
+                            item_reference_hash=int(p_hash),
+                            stack_size=1,
+                            item_id=str(p_iid),
+                            character_id=str(p_char),
+                            membership_type=int(destiny_membership_type),
+                        )
+                        if pr.get("ErrorCode") != 1:
+                            return f"I found {item_name} in your postmaster but couldn't pull it, Guardian."
+                        # Now transfer from that character to target
+                        try:
+                            tr2 = self.bungie.transfer_item(
+                                membership_type=destiny_membership_type,
+                                character_id=target_cid,
+                                item_id=p_iid,
+                                item_reference_hash=p_hash,
+                                stack_size=1,
+                                transfer_to_vault=False,
+                            )
+                        except BungieAPIError as be:
+                            txt = str(be)
+                            if ("DestinyNoRoomInDestination" in txt) or ('"ErrorCode":1642' in txt) or ("ErrorCode 1642" in txt):
+                                if _free_slot_on_target(p_hash):
+                                    tr2 = self.bungie.transfer_item(
+                                        membership_type=destiny_membership_type,
+                                        character_id=target_cid,
+                                        item_id=p_iid,
+                                        item_reference_hash=p_hash,
+                                        stack_size=1,
+                                        transfer_to_vault=False,
+                                    )
+                                else:
+                                    return f"I pulled {item_name}, but couldn't make room on your character to move it, Guardian."
+                            else:
+                                raise
+                        item_instance_id = p_iid
+                        item_hash = p_hash
+                        did_move = True
+                if not item_instance_id:
+                    # As a last resort after moves, refresh target inventory to find instance id by hash
+                    if did_move and item_hash is not None:
+                        try:
+                            time.sleep(0.2)
+                            profx = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                            invx = profx.get("Response", {}).get("characterInventories", {}).get("data", {})
+                            for itx in (invx.get(target_cid, {}) or {}).get("items", []):
+                                if itx.get("itemHash") == item_hash:
+                                    item_instance_id = itx.get("itemInstanceId")
+                                    break
+                            if not item_instance_id:
+                                eqx = profx.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                                for itx in (eqx.get(target_cid, {}) or {}).get("items", []):
+                                    if itx.get("itemHash") == item_hash:
+                                        item_instance_id = itx.get("itemInstanceId")
+                                        break
+                        except Exception:
+                            pass
+                    if not item_instance_id:
+                        return f"I couldn't find '{item_name}' in your inventory, postmaster, or vault, Guardian."
+
+            # Equip the item
+            # Retry and refresh profile to resolve DestinyItemNotFound after transfers
+            def _refind_instance_on_target(by_hash: int | str | None) -> str | None:
+                try:
+                    if by_hash is None:
+                        return None
+                    prof2 = self.bungie.get_profile(
+                        destiny_membership_type,
+                        destiny_membership_id,
+                        [201, 205],
+                    )
+                    inv2 = prof2.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    for it in (inv2.get(target_cid, {}) or {}).get("items", []):
+                        if it.get("itemHash") == by_hash:
+                            return it.get("itemInstanceId")
+                    # Also check equipment in case it was auto-equipped
+                    eq2 = prof2.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                    for it in (eq2.get(target_cid, {}) or {}).get("items", []):
+                        if it.get("itemHash") == by_hash:
+                            return it.get("itemInstanceId")
+                except Exception:
+                    return None
+                return None
+
+            # Helper: clear currently equipped exotics on target by equipping non-exotic replacements
+            def _clear_exotics_on_target(for_item_hash: int | str | None) -> bool:
+                try:
+                    prof = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 200, 201, 205, 300])
+                    eq = prof.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                    inv = prof.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    chars = prof.get("Response", {}).get("characters", {}).get("data", {})
+                    instances = (
+                        prof.get("Response", {})
+                        .get("itemComponents", {})
+                        .get("instances", {})
+                        .get("data", {})
+                    )
+                    # Determine bucket we need to clear based on requested item
+                    desired_bucket = None
+                    try:
+                        if for_item_hash is not None:
+                            idef_req = self.bungie.get_inventory_item_definition(for_item_hash)
+                            desired_bucket = (
+                                idef_req.get("Response", {})
+                                .get("inventory", {})
+                                .get("bucketTypeHash")
+                            )
+                    except Exception:
+                        desired_bucket = None
+                    changed = False
+                    for it in (eq.get(target_cid, {}) or {}).get("items", []):
+                        try:
+                            ih = it.get("itemHash")
+                            if ih is None:
+                                continue
+                            idef = self.bungie.get_inventory_item_definition(ih)
+                            tier = idef.get("Response", {}).get("inventory", {}).get("tierType")
+                            if int(tier) != 6:
+                                continue  # not exotic
+                            bucket = idef.get("Response", {}).get("inventory", {}).get("bucketTypeHash")
+                            # Only clear exotics in the same bucket as the requested item, if known
+                            if desired_bucket is not None and bucket != desired_bucket:
+                                continue
+                            # Find best non-exotic candidate on character in same bucket
+                            best = None  # (power, instanceId, itemHash)
+                            for it2 in (inv.get(target_cid, {}) or {}).get("items", []):
+                                if it2.get("bucketHash") != bucket:
+                                    continue
+                                ih2 = it2.get("itemHash")
+                                idef2 = self.bungie.get_inventory_item_definition(ih2)
+                                tier2 = idef2.get("Response", {}).get("inventory", {}).get("tierType")
+                                if int(tier2) == 6:
+                                    continue
+                                iid2 = it2.get("itemInstanceId")
+                                power = 0
+                                if iid2 and str(iid2) in instances:
+                                    power = int(instances[str(iid2)].get("primaryStat", {}).get("value", 0))
+                                cand = (power, iid2, ih2)
+                                if best is None or cand[0] > best[0]:
+                                    best = cand
+                            # If none on character, try vault
+                            if best is None:
+                                pinv = (
+                                    prof.get("Response", {})
+                                    .get("profileInventory", {})
+                                    .get("data", {})
+                                    .get("items", [])
+                                )
+                                for itv in pinv:
+                                    if itv.get("bucketHash") != bucket:
+                                        continue
+                                    ihv = itv.get("itemHash")
+                                    idefv = self.bungie.get_inventory_item_definition(ihv)
+                                    tierv = idefv.get("Response", {}).get("inventory", {}).get("tierType")
+                                    if int(tierv) == 6:
+                                        continue
+                                    # Bring to character (make room if needed)
+                                    try:
+                                        tr = self.bungie.transfer_item(
+                                            membership_type=destiny_membership_type,
+                                            character_id=target_cid,
+                                            item_id=itv.get("itemInstanceId"),
+                                            item_reference_hash=ihv,
+                                            stack_size=1,
+                                            transfer_to_vault=False,
+                                        )
+                                    except BungieAPIError as be2:
+                                        t2 = str(be2)
+                                        if ("DestinyNoRoomInDestination" in t2) or ('"ErrorCode":1642' in t2) or ("ErrorCode 1642" in t2):
+                                            _free_slot_on_target(ihv)
+                                            tr = self.bungie.transfer_item(
+                                                membership_type=destiny_membership_type,
+                                                character_id=target_cid,
+                                                item_id=itv.get("itemInstanceId"),
+                                                item_reference_hash=ihv,
+                                                stack_size=1,
+                                                transfer_to_vault=False,
+                                            )
+                                        else:
+                                            raise
+                                    # After transfer, set as candidate with default power 0
+                                    best = (0, itv.get("itemInstanceId"), ihv)
+                                    break
+                            # If still none, try other characters' inventories
+                            if best is None:
+                                for ocid, _cdata in (chars or {}).items():
+                                    if ocid == target_cid:
+                                        continue
+                                    for ito in (inv.get(ocid, {}) or {}).get("items", []):
+                                        if ito.get("bucketHash") != bucket:
+                                            continue
+                                        ihoe = ito.get("itemHash")
+                                        try:
+                                            idefo = self.bungie.get_inventory_item_definition(ihoe)
+                                            tiero = idefo.get("Response", {}).get("inventory", {}).get("tierType")
+                                        except Exception:
+                                            tiero = 999
+                                        if int(tiero) == 6:
+                                            continue
+                                        # Move via vault then to target
+                                        self.bungie.transfer_item(
+                                            membership_type=destiny_membership_type,
+                                            character_id=ocid,
+                                            item_id=ito.get("itemInstanceId"),
+                                            item_reference_hash=ihoe,
+                                            stack_size=1,
+                                            transfer_to_vault=True,
+                                        )
+                                        try:
+                                            self.bungie.transfer_item(
+                                                membership_type=destiny_membership_type,
+                                                character_id=target_cid,
+                                                item_id=ito.get("itemInstanceId"),
+                                                item_reference_hash=ihoe,
+                                                stack_size=1,
+                                                transfer_to_vault=False,
+                                            )
+                                        except BungieAPIError as be3:
+                                            t3 = str(be3)
+                                            if ("DestinyNoRoomInDestination" in t3) or ('"ErrorCode":1642' in t3) or ("ErrorCode 1642" in t3):
+                                                _free_slot_on_target(ihoe)
+                                                self.bungie.transfer_item(
+                                                    membership_type=destiny_membership_type,
+                                                    character_id=target_cid,
+                                                    item_id=ito.get("itemInstanceId"),
+                                                    item_reference_hash=ihoe,
+                                                    stack_size=1,
+                                                    transfer_to_vault=False,
+                                                )
+                                            else:
+                                                continue
+                                        best = (0, ito.get("itemInstanceId"), ihoe)
+                                        break
+                                    if best is not None:
+                                        break
+                            if best is None or best[1] is None:
+                                continue
+                            # Equip replacement in that bucket
+                            eqr = self.bungie.equip_item(
+                                membership_type=destiny_membership_type,
+                                item_id=str(best[1]),
+                                character_id=str(target_cid),
+                            )
+                            if eqr.get("ErrorCode") == 1:
+                                changed = True
+                        except Exception:
+                            continue
+                    return changed
+                except Exception:
+                    return False
+
+
+            # Ensure we have a valid instance id on target before attempting equip
+            # First pass: small settle and re-find by hash (handles cross-character moves)
+            if item_hash is not None:
+                time.sleep(0.6 if did_move else 0.35)
+                re_iid = _refind_instance_on_target(item_hash)
+                if re_iid:
+                    item_instance_id = re_iid
+            # If still missing, try a short retry loop to let Bungie sync the move
+            if (item_instance_id is None) and (item_hash is not None):
+                for wait in (0.25, 0.4, 0.6):
+                    time.sleep(wait)
+                    re_iid = _refind_instance_on_target(item_hash)
+                    if re_iid:
+                        item_instance_id = re_iid
+                        break
+            # As a last resort before equip, if we recently moved it and still don't see the instance,
+            # refresh a wider set of components and try to resolve by hash or fuzzy name on the target character.
+            if (item_instance_id is None) and (did_move):
+                try:
+                    profw = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 201, 205])
+                    invw = profw.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    # Try by hash
+                    for itw in (invw.get(target_cid, {}) or {}).get("items", []):
+                        if item_hash is not None and itw.get("itemHash") == item_hash:
+                            item_instance_id = itw.get("itemInstanceId")
+                            break
+                    # Try by name if still missing
+                    if item_instance_id is None:
+                        for itw in (invw.get(target_cid, {}) or {}).get("items", []):
+                            ih = itw.get("itemHash")
+                            if ih is None:
+                                continue
+                            nm = self._get_item_name(ih)
+                            if nm and self._similarity(nm, item_name) >= 0.75:
+                                item_instance_id = itw.get("itemInstanceId")
+                                item_hash = ih
+                                break
+                except Exception:
+                    pass
+
+            equip_result = {"ErrorCode": -1}
+            for attempt in range(4):
+                try:
+                    eq = self.bungie.equip_item(
+                        membership_type=destiny_membership_type,
+                        item_id=item_instance_id,
+                        character_id=target_cid
+                    )
+                    equip_result = eq
+                    if eq.get("ErrorCode") == 1:
+                        break
+                    # Non-success dict response; attempt gentle retry
+                    ec = eq.get("ErrorCode")
+                    emsg = str(eq)
+                    if ec == 1623 or "DestinyItemNotFound" in emsg or "ItemNotFound" in emsg:
+                        time.sleep(0.3 * (attempt + 1))
+                        new_iid = _refind_instance_on_target(item_hash)
+                        if new_iid:
+                            item_instance_id = new_iid
+                            continue
+                except BungieAPIError as be:
+                    txt = str(be)
+                    # Handle common transient case by refreshing instance id and retrying
+                    if "DestinyItemNotFound" in txt or '"ErrorCode":1623' in txt or "ErrorCode 1623" in txt:
+                        time.sleep(0.35 * (attempt + 1))
+                        new_iid = _refind_instance_on_target(item_hash)
+                        if new_iid:
+                            item_instance_id = new_iid
+                            continue
+                        # brief wait before next attempt even if not found
+                        time.sleep(0.2)
+                        continue
+                    # Other errors: surface them
+                    raise
+                time.sleep(0.25 * (attempt + 1))
+
+            if equip_result.get("ErrorCode") == 1:
+                # Optionally verify equip took effect; do not block success if confirmation lags
+                try:
+                    time.sleep(0.25)
+                    profv = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                    eqv = profv.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                    equipped_ok = False
+                    for itv in (eqv.get(target_cid, {}) or {}).get("items", []):
+                        if (itv.get("itemInstanceId") == item_instance_id) or (item_hash is not None and itv.get("itemHash") == item_hash):
+                            equipped_ok = True
+                            break
+                    if not equipped_ok:
+                        try:
+                            bulk2 = self.bungie.equip_items(
+                                membership_type=destiny_membership_type,
+                                character_id=target_cid,
+                                item_ids=[item_instance_id],
+                            )
+                            if bulk2.get("ErrorCode") == 1:
+                                time.sleep(0.25)
+                                profv2 = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                                eqv2 = profv2.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                                for itv in (eqv2.get(target_cid, {}) or {}).get("items", []):
+                                    if (itv.get("itemInstanceId") == item_instance_id) or (item_hash is not None and itv.get("itemHash") == item_hash):
+                                        equipped_ok = True
+                                        break
+                        except Exception:
+                            pass
+                    # Even if not confirmed yet, return success; Bungie may lag a moment
+                except Exception:
+                    pass
+                # Remember last item
+                self._last_item = {
+                    "name": item_name,
+                    "instance_id": item_instance_id,
+                    "character_id": target_cid,
+                }
+                return f"Your {item_name} has been equipped, Guardian. Ready for battle!"
+            else:
+                # Final fallback: small settle, refresh, and try bulk EquipItems once
+                try:
+                    time.sleep(0.35)
+                    # Try to re-find instance and use EquipItems
+                    if item_hash is not None:
+                        new_iid = _refind_instance_on_target(item_hash)
+                        if new_iid:
+                            item_instance_id = new_iid
+                    bulk = self.bungie.equip_items(
+                        membership_type=destiny_membership_type,
+                        character_id=target_cid,
+                        item_ids=[item_instance_id],
+                    )
+                    if bulk.get("ErrorCode") == 1:
+                        self._last_item = {
+                            "name": item_name,
+                            "instance_id": item_instance_id,
+                            "character_id": target_cid,
+                        }
+                        return f"Your {item_name} has been equipped, Guardian. Ready for battle!"
+                except Exception:
+                    pass
+                return f"Sorry Guardian, I couldn't equip your {item_name}. The equip action failed."
+
+        except BungieAPIError as e:
+            msg = str(e)
+            if "HTTP error 401" in msg:
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            # Friendly mapping for common Bungie equip failures
+            if ("DestinyItemFailedUnlockCheck" in msg) or ('"ErrorCode":1639' in msg):
+                return (
+                    "I canâ€™t equip that, Guardian â€” Bungie says this character doesnâ€™t meet the itemâ€™s equip requirements. "
+                    "This usually means the required DLC/license isnâ€™t owned on your active platform, or the item isnâ€™t unlocked on this account yet. "
+                    "Try claiming it from Collections, switching characters, or equipping a different item first."
+                )
+            # Final resilience for DestinyItemNotFound (1623): re-resolve and try bulk equip once
+            if ("DestinyItemNotFound" in msg) or ('"ErrorCode":1623' in msg) or ("ErrorCode 1623" in msg):
+                try:
+                    time.sleep(0.6)
+                    def _refind_on_target(by_hash: int | str | None) -> str | None:
+                        try:
+                            if by_hash is None:
+                                return None
+                            profx = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                            invx = profx.get("Response", {}).get("characterInventories", {}).get("data", {})
+                            for itx in (invx.get(target_cid, {}) or {}).get("items", []):
+                                if itx.get("itemHash") == by_hash:
+                                    return itx.get("itemInstanceId")
+                            eqx = profx.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                            for itx in (eqx.get(target_cid, {}) or {}).get("items", []):
+                                if itx.get("itemHash") == by_hash:
+                                    return itx.get("itemInstanceId")
+                        except Exception:
+                            return None
+                        return None
+                    nid = _refind_on_target(item_hash)
+                    if not nid:
+                        try:
+                            profw = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 201, 205])
+                            invw = profw.get("Response", {}).get("characterInventories", {}).get("data", {})
+                            for itw in (invw.get(target_cid, {}) or {}).get("items", []):
+                                ih = itw.get("itemHash")
+                                if ih is None:
+                                    continue
+                                nm = self._get_item_name(ih)
+                                if (item_hash is not None and ih == item_hash) or (nm and self._similarity(nm, item_name) >= 0.75):
+                                    nid = itw.get("itemInstanceId")
+                                    item_hash = ih
+                                    break
+                        except Exception:
+                            nid = None
+                    if nid:
+                        bulk = self.bungie.equip_items(
+                            membership_type=destiny_membership_type,
+                            character_id=target_cid,
+                            item_ids=[nid],
+                        )
+                        if bulk.get("ErrorCode") == 1:
+                            return f"Your {item_name} has been equipped, Guardian. Ready for battle!"
+                except Exception:
+                    pass
+            return f"Sorry Guardian, I encountered an error while trying to equip your item: {msg}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while trying to equip your item: {str(e)}"
+
+    def _handle_postmaster_list(self, class_target: str | None = None) -> str:
+        """List items currently in the Postmaster across characters."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to check your postmaster."
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 200, 201, 205])
+
+            items_by_char: dict[str, list[str]] = {}
+            # Determine target character first
+            invs = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+            chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+            # Choose character: class -> active -> first
+            target_cid = None
+            if class_target:
+                class_map = {"titan": 0, "hunter": 1, "warlock": 2}
+                target_class = class_map.get(class_target)
+                if target_class is not None and isinstance(chars, dict):
+                    for _cid, _cdata in chars.items():
+                        if _cdata.get("classType") == target_class:
+                            target_cid = _cid
+                            break
+            if not target_cid:
+                target_cid = self._active_character_id(profile)
+            if not target_cid and isinstance(chars, dict) and chars:
+                target_cid = list(chars.keys())[0]
+
+            # Scan character inventories for Postmaster items (location == 4)
+            # Always show Lost Items for the active (or specified) character only.
+            if isinstance(invs, dict):
+                for cid, cdata in invs.items():
+                    if target_cid and cid != target_cid:
+                        continue
+                    for it in cdata.get("items", []):
+                        loc = it.get("location")
+                        bh = it.get("bucketHash")
+                        if loc is None and bh is not None:
+                            loc = self._bucket_location_safe(bh)
+                        is_pm = (loc == 4) or (bh is not None and self._is_postmaster_bucket(bh))
+                        if is_pm:
+                            name = self._get_item_name(it.get("itemHash")) or "Unknown Item"
+                            items_by_char.setdefault(cid, []).append(name)            # If nothing detected for the chosen character, report empty and suggest targeting
+            total = sum(len(v) for v in items_by_char.values())
+            if total == 0:
+                # If no explicit class was requested and nothing found, try a quick vendor-based hint instead of a false empty
+                hint = " Try specifying a character, e.g. 'on my Hunter'." if class_target is None else ""
+                return f"Your postmaster is empty, Guardian.{hint}"
+
+            response = "Here's what's in your Postmaster, Guardian:\n\n"
+            shown = 0
+            for char_id, names in items_by_char.items():
+                for nm in names:
+                    response += f"- {nm}\n"
+                    shown += 1
+                    if shown >= 20:
+                        break
+                if shown >= 20:
+                    break
+            if total > shown:
+                response += f"\n...and {total - shown} more items."
+            self._last_location = "postmaster"
+            return response
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate."
+            return f"Sorry Guardian, I couldn't list your postmaster: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I couldn't list your postmaster: {str(e)}"
+
+    def _handle_pull_from_postmaster(self, item_name: str) -> str:
+        """Pull an item from the Postmaster to inventory and remember it."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your postmaster."
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 107, 111, 112])
+
+            item_instance_id, character_id, item_hash, _ = self._best_postmaster_match(profile, item_name)
+            if not item_instance_id:
+                return f"I couldn't find '{item_name}' in your postmaster, Guardian."
+
+            # If character id unknown, choose first character as target
+            if not character_id:
+                chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+                if not chars:
+                    return "I couldn't find a character to receive the item, Guardian."
+                character_id = list(chars.keys())[0]
+
+            # Pull from postmaster
+            pr = self.bungie.pull_from_postmaster(
+                item_reference_hash=int(item_hash),
+                stack_size=1,
+                item_id=str(item_instance_id),
+                character_id=str(character_id),
+                membership_type=int(destiny_membership_type),
+            )
+            if pr.get("ErrorCode") == 1:
+                self._last_item = {
+                    "name": item_name,
+                    "instance_id": item_instance_id,
+                    "character_id": character_id,
+                    "hash": item_hash,
+                }
+                return f"I've pulled {item_name} from your postmaster to your inventory, Guardian."
+            return f"Sorry Guardian, I couldn't pull {item_name} from your postmaster."
+        except BungieAPIError as e:
+            if "DestinyCannotPerformActionAtThisLocation" in str(e):
+                return "I can't pull that from the postmaster right now, Guardian. Try visiting the Tower first."
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate."
+            return f"Sorry Guardian, I encountered an error pulling your item: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error pulling your item: {str(e)}"
+
+    def _handle_dismantle_item(self, item_name: str) -> str:
+        """Dismantle an item by name. If found in Postmaster, pull first then dismantle."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to dismantle items."
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 107, 111, 112])
+
+            # Prefer items already in inventory
+            item_instance_id, character_id, _, _ = self._best_inventory_match(profile, item_name)
+            # If not in inventory, check postmaster and pull first
+            if not item_instance_id:
+                pm_iid, pm_char, pm_hash, _ = self._best_postmaster_match(profile, item_name)
+                if not pm_iid:
+                    return f"I couldn't find '{item_name}' to dismantle, Guardian."
+                if not pm_char:
+                    chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+                    if not chars:
+                        return "I couldn't find a character to receive the item, Guardian."
+                    pm_char = list(chars.keys())[0]
+                pr = self.bungie.pull_from_postmaster(
+                    item_reference_hash=int(pm_hash),
+                    stack_size=1,
+                    item_id=str(pm_iid),
+                    character_id=str(pm_char),
+                    membership_type=int(destiny_membership_type),
+                )
+                if pr.get("ErrorCode") != 1:
+                    return f"I found {item_name} in your postmaster but couldn't pull it to dismantle, Guardian."
+                item_instance_id = pm_iid
+                character_id = pm_char
+
+            # Dismantle
+            dr = self.bungie.dismantle_item(
+                membership_type=destiny_membership_type,
+                character_id=str(character_id),
+                item_id=str(item_instance_id),
+            )
+            if dr.get("ErrorCode") == 1:
+                return f"I've dismantled {item_name}, Guardian."
+            return f"Sorry Guardian, I couldn't dismantle {item_name}."
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate."
+            return f"Sorry Guardian, I encountered an error while dismantling: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while dismantling: {str(e)}"
+
+    def _handle_stats_request(self, stat_type: str | None = None, send_with_system=None, model_provider: str = "ollama") -> str:
+        """Handle stats requests."""
+        logger = logging.getLogger("ghost")
+        try:
+            destiny_info = self._get_destiny_membership()
+            logger.info(f"[assistant] Destiny info: {destiny_info}")
+            if not destiny_info:
+                return "Ah, Guardian! To show you your glorious stats, I need you to authenticate with Bungie first. Head over to the authentication page and link your account!"
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile to find characters
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [200])
+
+            if not profile.get("Response", {}).get("characters", {}).get("data"):
+                return "Hmm, I can't seem to find your character information, Guardian. Make sure your Bungie account is properly linked."
+
+            # Get stats for the first character
+            character_id = list(profile["Response"]["characters"]["data"].keys())[0]
+
+            stats = self.bungie.get_historical_stats_for_account(destiny_membership_type, destiny_membership_id, groups=[1])
+
+            # If no merged stats, try per character
+            if not stats.get("Response", {}).get("mergedAllCharacters", {}).get("results"):
+                logger.info("[assistant] No merged stats, trying per character")
+                stats = self.bungie.get_historical_stats(destiny_membership_type, destiny_membership_id, character_id, groups=[1])
+
+            if not stats.get("Response"):
+                return "I couldn't retrieve your stats from Bungie, Guardian. Their servers might be having a moment."
+
+            # Debug logging
+            logger = logging.getLogger("ghost")
+            logger.info(f"[assistant] Stats response: {stats}")
+
+            # Parse and format key stats
+            merged_stats = None
+            if "mergedAllCharacters" in stats["Response"] and stats["Response"]["mergedAllCharacters"].get("results"):
+                merged_stats = stats["Response"]["mergedAllCharacters"]["results"]
+            elif isinstance(stats["Response"], dict) and any(key in stats["Response"] for key in ["activitiesCleared", "kills", "deaths"]):
+                merged_stats = stats["Response"]
+            else:
+                # Try to find stats in other possible locations
+                response_data = stats["Response"]
+                if "characters" in response_data:
+                    # Per-character response structure
+                    char_data = response_data["characters"]
+                    if isinstance(char_data, dict) and character_id in char_data:
+                        merged_stats = char_data[character_id].get("stats", {})
+
+            logger.info(f"[assistant] Merged stats: {merged_stats}")
+
+            if not merged_stats:
+                return "I can see your account, Guardian, but it looks like you haven't played enough Destiny 2 yet to have meaningful stats. Get out there and make some Light!"
+
+            # Let the AI model format the stats response naturally
+
+            # Prepare stats data for the model
+            stats_data = {}
+            for category, category_data in merged_stats.items():
+                if not isinstance(category_data, dict) or "allTime" not in category_data:
+                    continue
+                all_time_stats = category_data["allTime"]
+                category_stats = {}
+                for stat_key, stat_data in all_time_stats.items():
+                    if isinstance(stat_data, dict) and "basic" in stat_data:
+                        display_value = stat_data["basic"].get("displayValue", "")
+                        if display_value and display_value not in ["0", "0.0", "0.00"]:
+                            display_name = stat_data["basic"].get("displayName", stat_key.replace('weaponKills', '').replace('Kills', ' Kills'))
+                            category_stats[display_name] = display_value
+                if category_stats:
+                    category_name = category.replace('all', '').upper()  # allPvE -> PvE
+                    stats_data[category_name] = category_stats
+
+            if not stats_data:
+                return "ðŸ«¥ I found your account, but your stats seem to be hiding from me. Try playing a few more games to unlock some statistics!"
+
+            # Use AI to format the response
+            system_prompt = (
+                "You are the Ghost from Destiny 2. Respond in short, simple sentences like in the game. "
+                "For stats, use simple bullet point lists. Keep responses brief. "
+                "Group by PvE and PvP categories. No verbose commentary."
+            )
+
+            user_prompt = f"Format these Destiny 2 stats for the player:\n\n{stats_data}\n\nRespond as the Ghost."
+
+            return send_with_system(system_prompt, user_prompt)
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            logger.exception(f"[assistant] Bungie API error in stats request: {e}")
+            return f"Sorry Guardian, I encountered an error while retrieving your stats: {str(e)}. Try again in a moment."
+        except Exception as e:
+            logger.exception(f"[assistant] Error in stats request: {e}")
+            return f"Sorry Guardian, I encountered an error while retrieving your stats: {str(e)}. Try again in a moment."
+
+    def _handle_transfer_pronoun(self, target: str) -> str:
+        """Handle pronoun-based transfer using the last referenced item.
+
+        target must be 'vault' or 'inventory'.
+        """
+        try:
+            if not self._last_item or not self._last_item.get("instance_id"):
+                return "I don't recall which item you mean, Guardian. Please say the item name."
+
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items."
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Prefer last known character; if moving to inventory and missing, pick first
+            character_id = self._last_item.get("character_id")
+            if target == "inventory" and not character_id:
+                profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [200])
+                chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+                if not chars:
+                    return "I couldn't find a character to transfer to, Guardian."
+                character_id = list(chars.keys())[0]
+
+            item_instance_id = self._last_item.get("instance_id")
+            item_hash = self._last_item.get("hash")
+
+            to_vault = (target == "vault")
+            result = self.bungie.transfer_item(
+                membership_type=destiny_membership_type,
+                character_id=character_id,
+                item_id=item_instance_id,
+                item_reference_hash=item_hash,
+                stack_size=1,
+                transfer_to_vault=to_vault,
+            )
+            if result.get("ErrorCode") == 1:
+                if to_vault:
+                    return f"All set, Guardian. I've moved {self._last_item.get('name','the item')} back to your vault."
+                return f"Done, Guardian. I've moved {self._last_item.get('name','the item')} to your inventory."
+            return "Sorry Guardian, the transfer failed."
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while transferring your item: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while transferring your item: {str(e)}"
+
+    def _handle_transfer_to_character(self, item_name: str, class_target: str) -> str:
+        """Transfer an item to the specified class (hunter/warlock/titan) or active character (me)."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items."
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Load characters + inventories + equipment + profile inventory
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 200, 201, 205])
+            chars = profile.get("Response", {}).get("characters", {}).get("data", {})
+            class_map = {"titan": 0, "hunter": 1, "warlock": 2}
+            want = class_map.get(class_target)
+            target_cid = None
+            if class_target == "me":
+                target_cid = self._active_character_id(profile)
+            elif want is not None:
+                for cid, cdata in (chars or {}).items():
+                    if cdata.get("classType") == want:
+                        target_cid = cid
+                        break
+            if not target_cid:
+                return ("I couldn't find your current character, Guardian." if class_target == "me"
+                        else "I couldn't find your {0} character, Guardian.".format(class_target))
+
+            # Human-friendly name for target: if 'me', translate to actual class name
+            if class_target == "me":
+                class_type = None
+                try:
+                    if target_cid and target_cid in (chars or {}):
+                        class_type = (chars or {}).get(target_cid, {}).get("classType")
+                except Exception:
+                    class_type = None
+                class_names = {0: "titan", 1: "hunter", 2: "warlock"}
+                display_target = class_names.get(class_type, "current character")
+            else:
+                display_target = class_target
+
+            # Helper: free one slot in target inventory for this item's bucket (handles 1642)
+            def _free_slot_on_target(for_item_hash: int | str | None) -> bool:
+                try:
+                    if for_item_hash is None:
+                        return False
+                    idef = self.bungie.get_inventory_item_definition(for_item_hash)
+                    bucket_hash = (
+                        idef.get("Response", {})
+                        .get("inventory", {})
+                        .get("bucketTypeHash")
+                    )
+                    if not bucket_hash:
+                        return False
+                    profx = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205, 300])
+                    invx = profx.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    instances = (
+                        profx.get("Response", {})
+                        .get("itemComponents", {})
+                        .get("instances", {})
+                        .get("data", {})
+                    )
+                    best = None  # (tierType, power, instanceId, itemHash)
+                    for itx in (invx.get(target_cid, {}) or {}).get("items", []):
+                        if itx.get("bucketHash") != bucket_hash:
+                            continue
+                        ihx = itx.get("itemHash")
+                        try:
+                            idef2 = self.bungie.get_inventory_item_definition(ihx)
+                            inv2 = idef2.get("Response", {}).get("inventory", {})
+                            tier = inv2.get("tierType", 999)
+                        except Exception:
+                            tier = 999
+                        iid2 = itx.get("itemInstanceId")
+                        power = 9999
+                        if iid2 and str(iid2) in instances:
+                            power = instances[str(iid2)].get("primaryStat", {}).get("value", 9999)
+                        cand = (int(tier) if isinstance(tier, int) else 999, int(power), iid2, ihx)
+                        if best is None or cand < best:
+                            best = cand
+                    if best is None or best[2] is None:
+                        return False
+                    _, _, rid, rhash = best
+                    tr_out = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=target_cid,
+                        item_id=str(rid),
+                        item_reference_hash=int(rhash),
+                        stack_size=1,
+                        transfer_to_vault=True,
+                    )
+                    return tr_out.get("ErrorCode") == 1 if isinstance(tr_out, dict) else True
+                except Exception:
+                    return False
+
+            # If the request likely refers to the last item ('it') or a near match,
+            # prefer resolving by the last known instance to avoid fuzzy mismatches.
+            preferred_iid = None
+            preferred_hash = None
+            preferred_source = None
+            try:
+                if self._last_item and self._similarity(self._last_item.get("name", ""), item_name) >= 0.75:
+                    preferred_iid = str(self._last_item.get("instance_id")) if self._last_item.get("instance_id") else None
+                    preferred_hash = self._last_item.get("hash")
+                    preferred_source = self._last_item.get("character_id")
+                    # Verify current location of preferred_iid across inventories/equipment
+                    if preferred_iid:
+                        found_now = False
+                        cinv_now = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                        for cid_now, cdata_now in (cinv_now or {}).items():
+                            for it_now in cdata_now.get("items", []) or []:
+                                if str(it_now.get("itemInstanceId")) == preferred_iid:
+                                    preferred_source = cid_now
+                                    preferred_hash = it_now.get("itemHash", preferred_hash)
+                                    found_now = True
+                                    break
+                            if found_now:
+                                break
+                        if not found_now:
+                            ceq_now = profile.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                            for cid_now, cdata_now in (ceq_now or {}).items():
+                                for it_now in cdata_now.get("items", []) or []:
+                                    if str(it_now.get("itemInstanceId")) == preferred_iid:
+                                        preferred_source = cid_now
+                                        preferred_hash = it_now.get("itemHash", preferred_hash)
+                                        found_now = True
+                                        break
+                                if found_now:
+                                    break
+                        # If still not found, quick refresh of inventory/equipment components
+                        if not found_now:
+                            try:
+                                time.sleep(0.2)
+                                prof_now = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                                cinv2 = prof_now.get("Response", {}).get("characterInventories", {}).get("data", {})
+                                for cid_now, cdata_now in (cinv2 or {}).items():
+                                    for it_now in cdata_now.get("items", []) or []:
+                                        if str(it_now.get("itemInstanceId")) == preferred_iid:
+                                            preferred_source = cid_now
+                                            preferred_hash = it_now.get("itemHash", preferred_hash)
+                                            found_now = True
+                                            break
+                                    if found_now:
+                                        break
+                                if not found_now:
+                                    ceq2 = prof_now.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                                    for cid_now, cdata_now in (ceq2 or {}).items():
+                                        for it_now in cdata_now.get("items", []) or []:
+                                            if str(it_now.get("itemInstanceId")) == preferred_iid:
+                                                preferred_source = cid_now
+                                                preferred_hash = it_now.get("itemHash", preferred_hash)
+                                                found_now = True
+                                                break
+                                        if found_now:
+                                            break
+                            except Exception:
+                                pass
+            except Exception:
+                preferred_iid = None
+
+            # Try character inventories (any character)
+            item_instance_id, source_cid, item_hash, _ = self._best_inventory_match(profile, item_name)
+            # Override with preferred instance if available
+            if preferred_iid is not None and preferred_source is not None:
+                item_instance_id = preferred_iid
+                source_cid = preferred_source
+                if preferred_hash is not None:
+                    item_hash = preferred_hash
+            if item_instance_id and source_cid:
+                if source_cid != target_cid:
+                    # Cross-character transfer must go via the vault
+                    to_vault = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=source_cid,
+                        item_id=item_instance_id,
+                        item_reference_hash=item_hash,
+                        stack_size=1,
+                        transfer_to_vault=True,
+                    )
+                    if to_vault.get("ErrorCode") != 1:
+                        return f"I tried to move {item_name} to your {class_target}, but couldn't send it to the vault first, Guardian."
+                    to_target = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=target_cid,
+                        item_id=item_instance_id,
+                        item_reference_hash=item_hash,
+                        stack_size=1,
+                        transfer_to_vault=False,
+                    )
+                    if to_target.get("ErrorCode") == 1:
+                        self._last_item = {"name": item_name, "instance_id": item_instance_id, "character_id": target_cid, "hash": item_hash}
+                        return f"I've moved {item_name} to your {display_target}, Guardian."
+                    return f"I moved {item_name} to the vault but couldn't bring it to your {display_target}, Guardian."
+                else:
+                    # Item appears to already be on target; if recent context disagrees, verify after a short settle
+                    try:
+                        needs_verify = False
+                        if self._last_item and self._similarity(self._last_item.get("name", ""), item_name) >= 0.75:
+                            if self._last_item.get("character_id") and self._last_item.get("character_id") != target_cid:
+                                needs_verify = True
+                        if needs_verify:
+                            time.sleep(0.35)
+                            profile2 = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 200, 201, 205])
+                            i2, s2, h2, _ = self._best_inventory_match(profile2, item_name)
+                            if i2 and s2 and s2 != target_cid:
+                                # Update state to continue flow to transfer
+                                item_instance_id, source_cid, item_hash = i2, s2, h2
+                            else:
+                                # Remember last item context on confirm
+                                try:
+                                    self._last_item = {"name": item_name, "instance_id": item_instance_id, "character_id": target_cid, "hash": item_hash}
+                                except Exception:
+                                    pass
+                                return f"{item_name} is already on your {display_target}, Guardian."
+                        else:
+                            try:
+                                self._last_item = {"name": item_name, "instance_id": item_instance_id, "character_id": target_cid, "hash": item_hash}
+                            except Exception:
+                                pass
+                            return f"{item_name} is already on your {display_target}, Guardian."
+                    except Exception:
+                        try:
+                            self._last_item = {"name": item_name, "instance_id": item_instance_id, "character_id": target_cid, "hash": item_hash}
+                        except Exception:
+                            pass
+                        return f"{item_name} is already on your {display_target}, Guardian."
+
+            # Try vault
+            v_iid, _, v_hash, _ = self._best_vault_match(profile, item_name)
+            if v_iid and v_hash:
+                try:
+                    tr = self.bungie.transfer_item(
+                        membership_type=destiny_membership_type,
+                        character_id=target_cid,
+                        item_id=v_iid,
+                        item_reference_hash=v_hash,
+                        stack_size=1,
+                        transfer_to_vault=False,
+                    )
+                except BungieAPIError as be:
+                    txt = str(be)
+                    if ("DestinyNoRoomInDestination" in txt) or ('"ErrorCode":1642' in txt) or ("ErrorCode 1642" in txt):
+                        if _free_slot_on_target(v_hash):
+                            tr = self.bungie.transfer_item(
+                                membership_type=destiny_membership_type,
+                                character_id=target_cid,
+                                item_id=v_iid,
+                                item_reference_hash=v_hash,
+                                stack_size=1,
+                                transfer_to_vault=False,
+                            )
+                        else:
+                            return f"Your {class_target} has no free slots for {item_name}, Guardian. I couldn't make room."
+                    else:
+                        raise
+                if tr.get("ErrorCode") == 1:
+                    self._last_item = {"name": item_name, "instance_id": v_iid, "character_id": target_cid, "hash": v_hash}
+                    return f"I've moved {item_name} from your vault to your {display_target}, Guardian."
+                return f"Sorry Guardian, I couldn't transfer {item_name} from your vault."
+
+            # Try postmaster
+            p_iid, p_cid, p_hash, _ = self._best_postmaster_match(profile, item_name)
+            if p_iid and p_hash:
+                if not p_cid:
+                    # pick first character to pull
+                    if not chars:
+                        return "I couldn't find a character to receive the item, Guardian."
+                    p_cid = list(chars.keys())[0]
+                pr = self.bungie.pull_from_postmaster(
+                    item_reference_hash=int(p_hash),
+                    stack_size=1,
+                    item_id=str(p_iid),
+                    character_id=str(p_cid),
+                    membership_type=int(destiny_membership_type),
+                )
+                if pr.get("ErrorCode") != 1:
+                    return f"I found {item_name} in your postmaster but couldn't pull it, Guardian."
+                if p_cid != target_cid:
+                    try:
+                        tr2 = self.bungie.transfer_item(
+                            membership_type=destiny_membership_type,
+                            character_id=target_cid,
+                            item_id=p_iid,
+                            item_reference_hash=p_hash,
+                            stack_size=1,
+                            transfer_to_vault=False,
+                        )
+                    except BungieAPIError as be:
+                        txt = str(be)
+                        if ("DestinyNoRoomInDestination" in txt) or ('"ErrorCode":1642' in txt) or ("ErrorCode 1642" in txt):
+                            if _free_slot_on_target(p_hash):
+                                tr2 = self.bungie.transfer_item(
+                                    membership_type=destiny_membership_type,
+                                    character_id=target_cid,
+                                    item_id=p_iid,
+                                    item_reference_hash=p_hash,
+                                    stack_size=1,
+                                    transfer_to_vault=False,
+                                )
+                            else:
+                                return f"I pulled {item_name}, but couldn't make room on your {display_target}, Guardian."
+                        else:
+                            raise
+                self._last_item = {"name": item_name, "instance_id": p_iid, "character_id": target_cid, "hash": p_hash}
+                return f"I've moved {item_name} to your {display_target}, Guardian."
+
+            # Try equipped: safe swap on source, then move via vault -> target
+            e_iid, e_cid, e_hash, _ = self._best_equipped_match(profile, item_name)
+            if e_iid and e_cid:
+                if e_cid == target_cid:
+                    try:
+                        self._last_item = {"name": item_name, "instance_id": e_iid, "character_id": target_cid, "hash": e_hash}
+                    except Exception:
+                        pass
+                    return f"{item_name} is already on your {display_target}, Guardian."
+                # Determine bucket for requested item
+                requested_bucket = None
+                try:
+                    idef = self.bungie.get_inventory_item_definition(e_hash)
+                    requested_bucket = (
+                        idef.get("Response", {})
+                        .get("inventory", {})
+                        .get("bucketTypeHash")
+                    )
+                except Exception:
+                    requested_bucket = None
+                # Find a low-tier replacement on source inventory or bring one from vault
+                replacement = None  # (tierType, instanceId, itemHash)
+                try:
+                    cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    for it in (cinv.get(e_cid, {}) or {}).get("items", []):
+                        try:
+                            if it.get("itemInstanceId") == e_iid:
+                                continue
+                            ih = it.get("itemHash")
+                            if ih is None:
+                                continue
+                            idef2 = self.bungie.get_inventory_item_definition(ih)
+                            inv2 = idef2.get("Response", {}).get("inventory", {})
+                            bkt2 = inv2.get("bucketTypeHash")
+                            if requested_bucket is not None and bkt2 != requested_bucket:
+                                continue
+                            tier = inv2.get("tierType", 999)
+                            cand = (int(tier) if isinstance(tier, int) else 999, it.get("itemInstanceId"), ih)
+                            if replacement is None or cand[0] < replacement[0]:
+                                replacement = cand
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                if replacement is None and requested_bucket is not None:
+                    try:
+                        pinv = (
+                            profile.get("Response", {})
+                            .get("profileInventory", {})
+                            .get("data", {})
+                            .get("items", [])
+                        )
+                        best_vault = None
+                        for it in pinv:
+                            try:
+                                ih = it.get("itemHash")
+                                if ih is None:
+                                    continue
+                                idef3 = self.bungie.get_inventory_item_definition(ih)
+                                inv3 = idef3.get("Response", {}).get("inventory", {})
+                                bkt3 = inv3.get("bucketTypeHash")
+                                if bkt3 != requested_bucket:
+                                    continue
+                                tier = inv3.get("tierType", 999)
+                                cand = (int(tier) if isinstance(tier, int) else 999, it.get("itemInstanceId"), ih)
+                                if best_vault is None or cand[0] < best_vault[0]:
+                                    best_vault = cand
+                            except Exception:
+                                continue
+                        if best_vault is not None:
+                            _, viid2, vhash2 = best_vault
+                            tr_in = self.bungie.transfer_item(
+                                membership_type=destiny_membership_type,
+                                character_id=e_cid,
+                                item_id=viid2,
+                                item_reference_hash=vhash2,
+                                stack_size=1,
+                                transfer_to_vault=False,
+                            )
+                            if tr_in.get("ErrorCode") == 1:
+                                replacement = (0, viid2, vhash2)
+                    except Exception:
+                        pass
+                if replacement is None:
+                    return (
+                        f"I found {item_name} equipped on another character, but I couldn't find a replacement to free it. Equip any filler weapon there and ask me again."
+                    )
+                # Equip replacement on source character
+                _, rep_iid, _rep_hash = replacement
+                try:
+                    eq_rep = self.bungie.equip_item(
+                        membership_type=destiny_membership_type,
+                        item_id=str(rep_iid),
+                        character_id=str(e_cid),
+                    )
+                    if eq_rep.get("ErrorCode") != 1:
+                        return f"I tried to equip a replacement to free {item_name}, but Bungie rejected the equip."
+                except Exception:
+                    return f"I tried to equip a replacement to free {item_name}, but something went wrong."
+                # Move requested from source -> vault -> target
+                to_vault = self.bungie.transfer_item(
+                    membership_type=destiny_membership_type,
+                    character_id=str(e_cid),
+                    item_id=str(e_iid),
+                    item_reference_hash=int(e_hash),
+                    stack_size=1,
+                    transfer_to_vault=True,
+                )
+                if to_vault.get("ErrorCode") != 1:
+                    return f"I equipped a replacement, but couldn't move {item_name} out from that character."
+                to_target = self.bungie.transfer_item(
+                    membership_type=destiny_membership_type,
+                    character_id=target_cid,
+                    item_id=str(e_iid),
+                    item_reference_hash=int(e_hash),
+                    stack_size=1,
+                    transfer_to_vault=False,
+                )
+                if to_target.get("ErrorCode") != 1:
+                    return f"I moved {item_name} to the vault but couldn't bring it to your {display_target}, Guardian."
+                self._last_item = {"name": item_name, "instance_id": e_iid, "character_id": target_cid, "hash": e_hash}
+                return f"I've moved {item_name} to your {display_target}, Guardian."
+
+            return f"I couldn't find '{item_name}' in your inventory, postmaster, or vault, Guardian."
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate."
+            return f"Sorry Guardian, I encountered an error while transferring: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while transferring: {str(e)}"
+
+    def _handle_transfer_then_equip(self, item_name: str, explicit_from_vault: bool) -> str:
+        """Transfer an item from vault if necessary, then equip it."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to manage your items."
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 107, 111, 112])
+
+            # Warm up defs quickly in background
+            try:
+                hashes = set()
+                pinv = profile.get("Response", {}).get("profileInventory", {}).get("data", {}).get("items", [])
+                for it in pinv:
+                    ih = it.get("itemHash")
+                    if ih is not None:
+                        hashes.add(ih)
+                cinv = profile.get("Response", {}).get("characterInventories", {}).get("data", {})
+                for _, cdata in cinv.items():
+                    for it in cdata.get("items", []):
+                        ih = it.get("itemHash")
+                        if ih is not None:
+                            hashes.add(ih)
+                self._warmup_defs_async(hashes)
+            except Exception:
+                pass
+
+            # Try to find in inventory first
+            item_instance_id, character_id, item_hash, _ = self._best_inventory_match(profile, item_name)
+            if not item_instance_id:
+                # Try postmaster first
+                pm_iid, pm_char, pm_hash, _ = self._best_postmaster_match(profile, item_name)
+                if pm_iid:
+                    if not pm_char:
+                        characters = profile.get("Response", {}).get("characters", {}).get("data", {})
+                        if not characters:
+                            return "I couldn't find a character to receive the item, Guardian."
+                        pm_char = list(characters.keys())[0]
+                    pr = self.bungie.pull_from_postmaster(
+                        item_reference_hash=int(pm_hash),
+                        stack_size=1,
+                        item_id=str(pm_iid),
+                        character_id=str(pm_char),
+                        membership_type=int(destiny_membership_type),
+                    )
+                    if pr.get("ErrorCode") != 1:
+                        return f"I found {item_name} in your postmaster but couldn't pull it, Guardian."
+                    item_instance_id = pm_iid
+                    character_id = pm_char
+                    item_hash = pm_hash
+                else:
+                    # If instructed or not found, bring from vault
+                    if explicit_from_vault or True:
+                        viid, _, vhash, _ = self._best_vault_match(profile, item_name)
+                        if not viid:
+                            return f"I couldn't find '{item_name}' in your postmaster, vault, or inventory, Guardian."
+                        # pick a character
+                        characters = profile.get("Response", {}).get("characters", {}).get("data", {})
+                        if not characters:
+                            return "I couldn't find a character to receive the item, Guardian."
+                        character_id = list(characters.keys())[0]
+                        try:
+                            tr = self.bungie.transfer_item(
+                                membership_type=destiny_membership_type,
+                                character_id=character_id,
+                                item_id=viid,
+                                item_reference_hash=vhash,
+                                stack_size=1,
+                                transfer_to_vault=False,
+                            )
+                        except BungieAPIError as be:
+                            txt = str(be)
+                            if ("DestinyNoRoomInDestination" in txt) or ('"ErrorCode":1642' in txt) or ("ErrorCode 1642" in txt):
+                                # free a slot on chosen character first
+                                # reuse equip flow helper if same scope; otherwise implement quick free
+                                try:
+                                    # Minimal local free using item hash
+                                    if _free_slot_on_target(vhash):
+                                        tr = self.bungie.transfer_item(
+                                            membership_type=destiny_membership_type,
+                                            character_id=character_id,
+                                            item_id=viid,
+                                            item_reference_hash=vhash,
+                                            stack_size=1,
+                                            transfer_to_vault=False,
+                                        )
+                                    else:
+                                        return f"I couldn't make room on your character to bring {item_name} from the vault, Guardian."
+                                except Exception:
+                                    return f"I couldn't make room on your character to bring {item_name} from the vault, Guardian."
+                            else:
+                                raise
+                        # After transfer, set instance id for equip
+                        item_instance_id = viid
+                        item_hash = vhash
+            if not item_instance_id or not character_id:
+                return f"I couldn't prepare '{item_name}' for equip, Guardian."
+
+            # Equip with a resilient retry similar to _handle_equip_item
+            def _refind_on_target(by_hash: int | str | None) -> str | None:
+                try:
+                    if by_hash is None:
+                        return None
+                    profx = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                    invx = profx.get("Response", {}).get("characterInventories", {}).get("data", {})
+                    for itx in (invx.get(character_id, {}) or {}).get("items", []):
+                        if itx.get("itemHash") == by_hash:
+                            return itx.get("itemInstanceId")
+                    eqx = profx.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                    for itx in (eqx.get(character_id, {}) or {}).get("items", []):
+                        if itx.get("itemHash") == by_hash:
+                            return itx.get("itemInstanceId")
+                except Exception:
+                    return None
+                return None
+
+            eq_result = {"ErrorCode": -1}
+            # Small settle after transfers
+            time.sleep(0.35)
+            for attempt in range(4):
+                try:
+                    eq = self.bungie.equip_item(
+                        membership_type=destiny_membership_type,
+                        item_id=item_instance_id,
+                        character_id=character_id,
+                    )
+                    eq_result = eq
+                    if eq.get("ErrorCode") == 1:
+                        break
+                    ec = eq.get("ErrorCode")
+                    emsg = str(eq)
+                    if ec == 1623 or "DestinyItemNotFound" in emsg or "ItemNotFound" in emsg:
+                        time.sleep(0.3 * (attempt + 1))
+                        new_iid = _refind_on_target(item_hash)
+                        if new_iid:
+                            item_instance_id = new_iid
+                            continue
+                    if ec == 1641 or "DestinyItemUniqueEquipRestricted" in emsg:
+                        # Clear exotics and retry
+                        if _clear_exotics_on_target():
+                            time.sleep(0.2)
+                            continue
+                except BungieAPIError as be:
+                    txt = str(be)
+                    if "DestinyItemNotFound" in txt or '"ErrorCode":1623' in txt or "ErrorCode 1623" in txt:
+                        time.sleep(0.35 * (attempt + 1))
+                        new_iid = _refind_on_target(item_hash)
+                        if new_iid:
+                            item_instance_id = new_iid
+                            continue
+                        time.sleep(0.2)
+                        continue
+                    if ("DestinyItemUniqueEquipRestricted" in txt) or ('"ErrorCode":1641' in txt) or ("ErrorCode 1641" in txt):
+                        if _clear_exotics_on_target():
+                            time.sleep(0.2)
+                            continue
+                        # If we couldn't clear, surface error
+                        raise
+                    raise
+                time.sleep(0.25 * (attempt + 1))
+
+            if eq_result.get("ErrorCode") == 1:
+                # Optionally verify, but do not block success if confirmation lags
+                try:
+                    time.sleep(0.25)
+                    profv = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                    eqv = profv.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                    equipped_ok = False
+                    for itv in (eqv.get(character_id, {}) or {}).get("items", []):
+                        if (itv.get("itemInstanceId") == item_instance_id) or (item_hash is not None and itv.get("itemHash") == item_hash):
+                            equipped_ok = True
+                            break
+                    if not equipped_ok:
+                        try:
+                            bulk2 = self.bungie.equip_items(
+                                membership_type=destiny_membership_type,
+                                character_id=character_id,
+                                item_ids=[item_instance_id],
+                            )
+                            if bulk2.get("ErrorCode") == 1:
+                                time.sleep(0.25)
+                                profv2 = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [201, 205])
+                                eqv2 = profv2.get("Response", {}).get("characterEquipment", {}).get("data", {})
+                                for itv in (eqv2.get(character_id, {}) or {}).get("items", []):
+                                    if (itv.get("itemInstanceId") == item_instance_id) or (item_hash is not None and itv.get("itemHash") == item_hash):
+                                        equipped_ok = True
+                                        break
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                self._last_item = {
+                    "name": item_name,
+                    "instance_id": item_instance_id,
+                    "character_id": character_id,
+                }
+                return f"Transferred and equipped {item_name}, Guardian."
+            # Final fallback: try EquipItems once
+            try:
+                time.sleep(0.3)
+                if item_hash is not None:
+                    ni = _refind_on_target(item_hash)
+                    if ni:
+                        item_instance_id = ni
+                bulk = self.bungie.equip_items(
+                    membership_type=destiny_membership_type,
+                    character_id=character_id,
+                    item_ids=[item_instance_id],
+                )
+                if bulk.get("ErrorCode") == 1:
+                    self._last_item = {
+                        "name": item_name,
+                        "instance_id": item_instance_id,
+                        "character_id": character_id,
+                    }
+                    return f"Transferred and equipped {item_name}, Guardian."
+            except Exception:
+                pass
+            return f"I transferred {item_name}, but equipping failed, Guardian."
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while transferring and equipping: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while transferring and equipping: {str(e)}"
+
+    def _warmup_defs_async(self, hashes: set) -> None:
+        """Background fetch of item definitions to warm cache."""
+        try:
+            import threading
+
+            def worker(hs: set):
+                for ih in hs:
+                    try:
+                        self.bungie.get_inventory_item_definition(ih)
+                    except Exception:
+                        continue
+
+            if hashes:
+                t = threading.Thread(target=worker, args=(set(hashes),), daemon=True)
+                t.start()
+        except Exception:
+            pass
+
+    def _handle_vendor_request(self, location: str | None = None) -> str:
+        """Handle vendor requests."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to visit vendors, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile to find characters
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [200])
+
+            if not profile.get("Response", {}).get("characters", {}).get("data"):
+                return "I couldn't retrieve your character information, Guardian."
+
+            # Get vendors for the first character
+            character_id = list(profile["Response"]["characters"]["data"].keys())[0]
+
+            vendors = self.bungie.get_vendors(destiny_membership_type, destiny_membership_id, character_id)
+
+            if not vendors.get("Response", {}).get("vendors", {}).get("data"):
+                return "I couldn't retrieve vendor information, Guardian."
+
+            response = "Here are the vendors available to you, Guardian:\n\n"
+
+            vendor_data = vendors["Response"]["vendors"]["data"]
+            for vendor_hash, vendor_info in list(vendor_data.items())[:10]:  # Limit to first 10
+                vendor_name = vendor_info.get("vendorLocationIndex", "Unknown Vendor")
+                # Try to get vendor definition for name
+                try:
+                    vendor_def = self.bungie._get(f"/Destiny2/Manifest/DestinyVendorDefinition/{vendor_hash}/", authenticated=False)
+                    if vendor_def.get("Response", {}).get("displayProperties", {}).get("name"):
+                        vendor_name = vendor_def["Response"]["displayProperties"]["name"]
+                except:
+                    pass
+
+                response += f"â€¢ {vendor_name}\n"
+
+            return response
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while retrieving vendor information: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while retrieving vendor information: {str(e)}"
+
+    def _handle_milestone_request(self, milestone_type: str | None = None) -> str:
+        """Handle milestone requests."""
+        try:
+            milestones = self.bungie.get_milestones()
+
+            if not milestones.get("Response"):
+                return "I couldn't retrieve milestone information, Guardian."
+
+            response = "Here are the current milestones, Guardian:\n\n"
+
+            milestone_data = milestones["Response"]
+            for milestone_hash, milestone_info in list(milestone_data.items())[:5]:  # Limit to first 5
+                try:
+                    # Get milestone definition
+                    milestone_def = self.bungie._get(f"/Destiny2/Manifest/DestinyMilestoneDefinition/{milestone_hash}/", authenticated=False)
+                    name = milestone_def.get("Response", {}).get("displayProperties", {}).get("name", "Unknown Milestone")
+                    description = milestone_def.get("Response", {}).get("displayProperties", {}).get("description", "")
+
+                    response += f"â€¢ {name}\n"
+                    if description:
+                        response += f"  {description[:100]}{'...' if len(description) > 100 else ''}\n"
+                    response += "\n"
+                except:
+                    continue
+
+            return response
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while retrieving milestone information: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while retrieving milestone information: {str(e)}"
+
+    def _handle_activity_request(self, activity_type: str | None = None) -> str:
+        """Handle activity history requests."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to view your activity history, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile to find characters
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [200])
+
+            if not profile.get("Response", {}).get("characters", {}).get("data"):
+                return "I couldn't retrieve your character information, Guardian."
+
+            # Get activity history for the first character
+            character_id = list(profile["Response"]["characters"]["data"].keys())[0]
+
+            activities = self.bungie.get_activity_history(destiny_membership_type, destiny_membership_id, character_id, count=5)
+
+            if not activities.get("Response", {}).get("activities"):
+                return "I couldn't retrieve your recent activities, Guardian."
+
+            response = "Here are your recent activities, Guardian:\n\n"
+
+            activity_list = activities["Response"]["activities"]
+            for activity in activity_list[:5]:  # Limit to 5 most recent
+                activity_details = activity.get("activityDetails", {})
+                period = activity.get("period", "")
+                values = activity.get("values", {})
+
+                # Get activity definition for name
+                activity_hash = activity_details.get("referenceId")
+                activity_name = "Unknown Activity"
+                try:
+                    activity_def = self.bungie._get(f"/Destiny2/Manifest/DestinyActivityDefinition/{activity_hash}/", authenticated=False)
+                    activity_name = activity_def.get("Response", {}).get("displayProperties", {}).get("name", "Unknown Activity")
+                except:
+                    pass
+
+                kills = values.get("kills", {}).get("basic", {}).get("displayValue", "0")
+                deaths = values.get("deaths", {}).get("basic", {}).get("displayValue", "0")
+                kd_ratio = values.get("killsDeathsRatio", {}).get("basic", {}).get("displayValue", "0")
+
+                response += f"â€¢ {activity_name}\n"
+                response += f"  Kills: {kills} | Deaths: {deaths} | K/D: {kd_ratio}\n"
+                response += f"  Date: {period[:10] if period else 'Unknown'}\n\n"
+
+            return response
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while retrieving your activity history: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while retrieving your activity history: {str(e)}"
+
+    def _handle_character_request(self) -> str:
+        """Handle character information requests."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to view your characters, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get character information
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [200])
+
+            if not profile.get("Response", {}).get("characters", {}).get("data"):
+                return "I couldn't retrieve your character information, Guardian."
+
+            response = "Here are your characters, Guardian:\n\n"
+
+            character_data = profile["Response"]["characters"]["data"]
+            for character_id, character_info in character_data.items():
+                race = character_info.get("raceType", "Unknown")
+                class_type = character_info.get("classType", "Unknown")
+                gender = character_info.get("genderType", "Unknown")
+                light_level = character_info.get("light", 0)
+                last_played = character_info.get("dateLastPlayed", "")
+
+                # Convert enums to readable names
+                race_names = ["Human", "Awoken", "Exo"]
+                class_names = ["Titan", "Hunter", "Warlock"]
+                gender_names = ["Male", "Female", "Unknown"]
+
+                race_name = race_names[race] if 0 <= race < len(race_names) else "Unknown"
+                class_name = class_names[class_type] if 0 <= class_type < len(class_names) else "Unknown"
+                gender_name = gender_names[gender] if 0 <= gender < len(gender_names) else "Unknown"
+
+                response += f"â€¢ {race_name} {class_name} (Light: {light_level})\n"
+                response += f"  Last played: {last_played[:10] if last_played else 'Never'}\n\n"
+
+            return response
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while retrieving your character information: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while retrieving your character information: {str(e)}"
+
+    def _handle_leaderboard_request(self, stat_name: str | None = None) -> str:
+        """Handle leaderboard requests."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to view leaderboards, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile to find characters
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [200])
+
+            if not profile.get("Response", {}).get("characters", {}).get("data"):
+                return "I couldn't retrieve your character information, Guardian."
+
+            # Get leaderboards for the first character
+            character_id = list(profile["Response"]["characters"]["data"].keys())[0]
+
+            leaderboards = self.bungie.get_leaderboards_for_character(destiny_membership_type, destiny_membership_id, character_id)
+
+            if not leaderboards.get("Response"):
+                return "I couldn't retrieve leaderboard information, Guardian."
+
+            response = "Here are the current leaderboards, Guardian:\n\n"
+
+            # Parse leaderboard data
+            leaderboard_data = leaderboards["Response"]
+            for stat_key, stat_info in list(leaderboard_data.items())[:5]:  # Limit to first 5 stats
+                stat_name_display = stat_info.get("displayName", stat_key)
+                entries = stat_info.get("entries", [])
+
+                response += f"â€¢ {stat_name_display}\n"
+
+                # Show top 3 entries
+                for i, entry in enumerate(entries[:3]):
+                    rank = entry.get("rank", i + 1)
+                    value = entry.get("value", {}).get("basic", {}).get("displayValue", "N/A")
+                    player_name = entry.get("player", {}).get("destinyUserInfo", {}).get("displayName", "Unknown")
+
+                    response += f"  {rank}. {player_name}: {value}\n"
+
+                response += "\n"
+
+            return response
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while retrieving leaderboard information: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while retrieving leaderboard information: {str(e)}"
+
+    def _handle_inventory_list(self, item_type: str, location: str) -> str:
+        """Handle inventory/vault listing requests."""
+        try:
+            destiny_info = self._get_destiny_membership()
+            if not destiny_info:
+                return "Guardian, I need you to authenticate with Bungie first to check your inventory, or I couldn't find your Destiny 2 account."
+
+            destiny_membership_id, destiny_membership_type = destiny_info
+
+            # Get profile with profileInventory (102) and characterInventories (201)
+            profile = self.bungie.get_profile(destiny_membership_type, destiny_membership_id, [102, 201])
+
+            resp = profile.get("Response", {}) if isinstance(profile, dict) else {}
+            p_items = resp.get("profileInventory", {}).get("data", {}).get("items", []) or []
+            c_invs = resp.get("characterInventories", {}).get("data", {}) or {}
+            # Build unified iterable depending on requested location
+            # location mapping: inventory -> characterInventories; vault -> profileInventory; items -> both
+            items = []
+            if location.lower() == "inventory":
+                for _, cdata in c_invs.items():
+                    items.extend(cdata.get("items", []) or [])
+            elif location.lower() == "vault":
+                items.extend(p_items)
+            else:
+                items.extend(p_items)
+                for _, cdata in c_invs.items():
+                    items.extend(cdata.get("items", []) or [])
+
+            # Map item types
+            type_mapping = {
+                "weapons": 3,  # DestinyItemType.Weapon
+                "armor": 2,    # DestinyItemType.Armor
+                "gear": None,  # Any gear
+                "items": None  # Any items
+            }
+
+            target_type = type_mapping.get(item_type.lower())
+
+            # Map locations
+            location_mapping = {
+                "vault": 2,      # ItemLocation.Vault
+                "inventory": 1   # ItemLocation.Inventory
+            }
+
+            target_location = location_mapping.get(location.lower())
+            logging.info(f"Filtering for item_type: {item_type} (target_type: {target_type}), location: {location} (target_location: {target_location})")
+
+            # Filter items
+            filtered_items = []
+            for item in items:
+                if target_location is not None:
+                    loc = item.get("location")
+                    if loc is None:
+                        bh = item.get("bucketHash")
+                        if bh is None:
+                            continue
+                        loc = self._bucket_location_safe(bh)
+                    if loc != target_location:
+                        continue
+                if target_type is not None:
+                    # Get itemType from definition if not in item
+                    item_type_val = item.get("itemType")
+                    if item_type_val is None:
+                        try:
+                            item_hash = item["itemHash"]
+                            item_def = self.bungie._get(f"/Destiny2/Manifest/DestinyInventoryItemDefinition/{item_hash}/", authenticated=False)
+                            item_type_val = item_def.get("Response", {}).get("itemType")
+                        except:
+                            item_type_val = None
+                    if item_type_val != target_type:
+                        continue
+                filtered_items.append(item)
+
+            logging.info(f"Filtered items: {len(filtered_items)}")
+
+            if not filtered_items:
+                return f"Looks like you don't have any {item_type} in your {location}, Guardian."
+
+            # Get item names (limit to 20)
+            item_names = []
+            for item in filtered_items[:20]:
+                try:
+                    # Get item definition
+                    item_hash = item["itemHash"]
+                    item_def = self.bungie._get(f"/Destiny2/Manifest/DestinyInventoryItemDefinition/{item_hash}/", authenticated=False)
+                    name = item_def.get("Response", {}).get("displayProperties", {}).get("name", "Unknown Item")
+                    item_names.append(name)
+                except:
+                    item_names.append("Unknown Item")
+
+            response = f"Here's what you have in your {location}, Guardian:\n\n"
+            for name in item_names:
+                response += f"â€¢ {name}\n"
+
+            if len(filtered_items) > 20:
+                response += f"\n...and {len(filtered_items) - 20} more items."
+
+            self._last_location = location.lower()
+            return response
+
+        except BungieAPIError as e:
+            if "HTTP error 401" in str(e):
+                return "Guardian, your Bungie authentication has expired. Please re-authenticate by logging out and logging back in."
+            return f"Sorry Guardian, I encountered an error while retrieving your {location} information: {str(e)}"
+        except Exception as e:
+            return f"Sorry Guardian, I encountered an error while retrieving your {location} information: {str(e)}"

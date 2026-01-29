@@ -1,0 +1,15 @@
+fastapi
+pydantic
+python-dotenv
+requests
+PyJWT
+passlib[bcrypt]
+PySide6
+sounddevice
+numpy
+pyttsx3
+playsound==1.2.2
+# Optional for local STT
+faster-whisper
+soundfile
+uvicorn

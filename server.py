@@ -46,7 +46,8 @@ from ghost.assistant import GhostAssistant  # type: ignore
 from ghost import personalities as _personas  # type: ignore
 from ghost.voice import make_tts_provider, voice_id_for_persona  # type: ignore
 from ghost.voice import make_stt_provider  # type: ignore
-from ghost.voice import Pyttsx3TTS  # type: ignore
+from ghost.voice import Pyttsx3TTS, diagnose_audio, pcm16le_to_wav_bytes, Recorder  # type: ignore
+from ghost.voice import HAVE_SD  # type: ignore
 try:
     from ghost.voice import ElevenLabsTTS  # type: ignore
 except Exception:  # optional dependency may be missing
@@ -184,6 +185,11 @@ class ChatRequest(BaseModel):
     message: str
     provider: Optional[str] = None
     session_id: Optional[str] = None
+
+
+class LocalSttRequest(BaseModel):
+    duration: float | None = 6.0
+    device_index: int | None = None
 
 
 @app.get("/health")
@@ -617,9 +623,29 @@ def list_personas() -> dict[str, object]:
         return {"personas": ["destiny_ghost"]}
 
 
+def _persona_voice_map() -> dict[str, list[str]]:
+    """Return mapping of Eleven voice keys to personas that prefer them."""
+    personas: list[str]
+    try:
+        personas = _personas.list_personalities()
+    except Exception:
+        personas = []
+    mapping: dict[str, list[str]] = {}
+    for persona in personas:
+        try:
+            vid = voice_id_for_persona(persona)
+        except Exception:
+            vid = None
+        if vid:
+            key = f"eleven:{vid}"
+            mapping.setdefault(key, []).append(persona)
+    return mapping
+
+
 @app.get("/voices")
 def list_voices() -> dict[str, object]:
-    items: list[dict[str, str]] = []
+    persona_voice_map = _persona_voice_map()
+    items: list[dict[str, object]] = []
     items.append({"key": "system", "name": "System (device TTS)", "provider": "pyttsx3"})
     env_map = {
         "Vergil": os.getenv("ELEVEN_VOICE_ID_VERGIL", ""),
@@ -627,8 +653,14 @@ def list_voices() -> dict[str, object]:
         "Cortana": os.getenv("ELEVEN_VOICE_ID_CORTANA", ""),
     }
     for label, vid in env_map.items():
-        if vid:
-            items.append({"key": f"eleven:{vid}", "name": f"{label} (ElevenLabs)", "provider": "elevenlabs"})
+        if not vid:
+            continue
+        key = f"eleven:{vid}"
+        item: dict[str, object] = {"key": key, "name": f"{label} (ElevenLabs)", "provider": "elevenlabs"}
+        personas = persona_voice_map.get(key)
+        if personas:
+            item["personas"] = personas
+        items.append(item)
     # Only include curated voices by default to avoid clutter.
     # Set ELEVEN_LIST_ALL=1 to include all ElevenLabs voices from the account.
     if os.getenv("ELEVEN_LIST_ALL", "").lower() in {"1", "true", "yes"}:
@@ -642,11 +674,16 @@ def list_voices() -> dict[str, object]:
                         vid = v.get("voice_id")
                         name = v.get("name")
                         if vid and name:
-                            items.append({"key": f"eleven:{vid}", "name": f"{name} (ElevenLabs)", "provider": "elevenlabs"})
+                            key = f"eleven:{vid}"
+                            item = {"key": key, "name": f"{name} (ElevenLabs)", "provider": "elevenlabs"}
+                            personas = persona_voice_map.get(key)
+                            if personas:
+                                item["personas"] = personas
+                            items.append(item)
             except Exception:
                 pass
     seen = set()
-    out: list[dict[str, str]] = []
+    out: list[dict[str, object]] = []
     for it in items:
         if it["key"] in seen:
             continue
@@ -711,6 +748,69 @@ def stt_health() -> dict[str, object]:
     except Exception as e:
         info["error"] = str(e)
     return info
+
+
+def _normalize_sd_device(device: dict[str, object]) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for key, value in device.items():
+        if isinstance(value, (int, float, str)) or value is None:
+            normalized[key] = value
+            continue
+        try:
+            normalized[key] = float(value)  # numpy scalars, etc.
+        except Exception:
+            normalized[key] = str(value)
+    return normalized
+
+
+@app.get("/diagnostics/audio")
+def audio_diagnostics() -> dict[str, object]:
+    """Return structured audio diagnostics for mic/STT troubleshooting."""
+    payload: dict[str, object] = {
+        "report": diagnose_audio().splitlines(),
+        "openai_key": bool(os.getenv("OPENAI_API_KEY")),
+        "stt_provider": os.getenv("STT_PROVIDER", "auto"),
+        "secure_context_hint": bool(os.getenv("SSL_CERTFILE") and os.getenv("SSL_KEYFILE")),
+    }
+    if HAVE_SD:
+        try:
+            import sounddevice as _sd  # type: ignore
+
+            devices = _sd.query_devices()
+            payload["devices"] = [_normalize_sd_device(dev) for dev in devices]
+            try:
+                default_in = getattr(_sd.default, "device", [None, None])[0]
+            except Exception:
+                default_in = None
+            payload["default_input_device"] = default_in
+        except Exception as exc:
+            payload["devices_error"] = str(exc)
+    else:
+        payload["devices_error"] = "sounddevice module not available"
+    return payload
+
+
+@app.post("/stt/local")
+def stt_local(payload: LocalSttRequest) -> dict[str, object]:
+    """Record audio via the desktop host (PortAudio) and transcribe server-side."""
+    if not HAVE_SD:
+        raise HTTPException(status_code=500, detail="Local microphone capture unavailable on this host.")
+    duration = payload.duration or 6.0
+    duration = max(1.0, min(duration, 30.0))
+    try:
+        recorder = Recorder(sample_rate=16000, channels=1)
+        chunk = recorder.record_blocking(duration, device=payload.device_index)
+        wav_bytes = pcm16le_to_wav_bytes(chunk)
+    except Exception as exc:
+        logger.exception("Local recording failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Local recording failed: {exc}")
+    try:
+        stt = make_stt_provider()
+        text = stt.transcribe(wav_bytes)
+        return {"text": text}
+    except Exception as exc:
+        logger.exception("Local STT failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Transcription failed for local recording")
 
 
 # Mount static last so API routes like /auth/* remain reachable
