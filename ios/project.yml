@@ -1,0 +1,31 @@
+name: GhostCompanion
+options:
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  GhostCompanion:
+    type: application
+    platform: iOS
+    sources:
+      - GhostCompanion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cennis.ghostcompanion
+        PRODUCT_NAME: GhostCompanion
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        INFOPLIST_KEY_CFBundleDisplayName: Ghost Companion
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.games
+        INFOPLIST_KEY_CFBundleURLTypes:
+          - CFBundleURLName: Ghost Companion Auth
+            CFBundleURLSchemes:
+              - ghostcompanion
+        INFOPLIST_KEY_NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        GENERATE_INFOPLIST_FILE: true
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+    scheme:
+      testTargets: []

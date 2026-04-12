@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: ghost-companion
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: PUBLIC_APP_URL
+        value: https://ghostcompanion.com
+      - key: BUNGIE_REDIRECT_URI
+        value: https://ghostcompanion.com/oauth/callback
+      - key: GHOST_ENABLE_FINETUNE
+        value: "0"
+      - key: GROK_MODEL
+        value: grok-3
+      - key: BUNGIE_API_KEY
+        sync: false
+      - key: BUNGIE_CLIENT_ID
+        sync: false
+      - key: BUNGIE_CLIENT_SECRET
+        sync: false
+      - key: GHOST_TOKEN_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false

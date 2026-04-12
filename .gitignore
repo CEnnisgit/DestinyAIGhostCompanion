@@ -12,3 +12,18 @@ dist/
 .venv/
 venv/
 env/
+.env
+
+# Frontend local artifacts
+frontend/node_modules/
+
+# Runtime artifacts
+logs/
+.pycache_tmp/
+__pycache__/
+data/store.json
+runtime_probe.txt
+ghost_companion.db
+ghost_companion.db-journal
+data/*.db
+data/*.db-journal

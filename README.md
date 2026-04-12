@@ -190,3 +190,22 @@ Ghost: Nightfall, Crucible, and Gambit are featured with increased rewards.
 Guardian: Can you equip my highest power weapon?
 Ghost: Equipped your 1810 power weapon from inventory.
 ```
+
+## iPhone App
+
+The repo now includes a native SwiftUI iPhone client under `ios/`. It uses the same FastAPI backend for:
+
+- Bungie auth status
+- conversation history and streamed chat
+- inventory listing
+- equip, vault, move, and postmaster actions
+
+Generate the Xcode project on macOS with:
+
+```bash
+cd ios
+xcodegen generate
+open GhostCompanion.xcodeproj
+```
+
+For mobile OAuth, point your Bungie redirect URI at `/oauth/mobile/callback` on the backend and keep the app callback scheme as `ghostcompanion://auth`.

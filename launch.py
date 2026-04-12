@@ -45,22 +45,17 @@ STATE_DIR = get_state_dir()
 FRONTEND_DIR = REPO_ROOT / "frontend"
 ENV_FILE = STATE_DIR / ".env"
 REQUIREMENTS_FILE = REPO_ROOT / "requirements.txt"
+WEB_UI_URL = "http://127.0.0.1:8000/app"
 
 OLLAMA_HOST_DEFAULT = "http://127.0.0.1:11434"
 OLLAMA_TAGS_ENDPOINT = "/api/tags"
 OLLAMA_MODEL = "phi3"
 
-REQUIRED_ENV_VARS = {
-    "BUNGIE_API_KEY",
-    "BUNGIE_CLIENT_ID",
-    "BUNGIE_CLIENT_SECRET",
-    "BUNGIE_REDIRECT_URI",
-    "GHOST_TOKEN_KEY",
-    "OLLAMA_HOST",
-}
+REQUIRED_ENV_VARS: set[str] = set()
 
 ENV_DEFAULTS = {
     "OLLAMA_HOST": OLLAMA_HOST_DEFAULT,
+    "OLLAMA_MODEL": OLLAMA_MODEL,
 }
 
 
@@ -275,6 +270,10 @@ def ensure_frontend_dependencies() -> None:
         print("[launcher] Packaged assets include frontend dependencies.")
         return
 
+    if not FRONTEND_DIR.exists():
+        print("[launcher] frontend/ not found; using the built-in web UI served by FastAPI.")
+        return
+
     node_modules = FRONTEND_DIR / "node_modules"
     if node_modules.exists():
         return
@@ -341,39 +340,21 @@ def load_and_prompt_env() -> None:
         print(f"[launcher] No .env file found. Creating {ENV_FILE}...")
         ENV_FILE.touch()
 
-    print("[launcher] Checking required environment variables...")
+    print("[launcher] Loading optional environment variables...")
     load_dotenv(ENV_FILE)
     updated = False
 
-    for key in sorted(REQUIRED_ENV_VARS):
-        current = os.getenv(key)
-        if current:
+    for key, default_value in ENV_DEFAULTS.items():
+        if os.getenv(key):
             continue
-
-        default_hint = ENV_DEFAULTS.get(key)
-        if default_hint:
-            print(
-                f"[launcher] {key} is missing; press Enter to use default "
-                f"'{default_hint}'."
-            )
-        prompt = f"Enter value for {key}: "
-        value = input(prompt).strip()
-        if not value:
-            if default_hint:
-                value = default_hint
-                print(f"[launcher] Using default value for {key}: {value}")
-            else:
-                raise LaunchError(
-                    f"Environment variable {key} is required. Please rerun the launcher."
-                )
-        set_key(str(ENV_FILE), key, value)
-        os.environ[key] = value
+        os.environ[key] = default_value
+        set_key(str(ENV_FILE), key, default_value)
         updated = True
 
     if updated:
-        print(f"[launcher] Updated environment variables saved to {ENV_FILE}.")
+        print(f"[launcher] Added default runtime values to {ENV_FILE}.")
     else:
-        print("[launcher] All required environment variables are present.")
+        print("[launcher] Runtime defaults already present.")
 
 
 def stream_pipe(pipe: subprocess.PIPE, label: str) -> None:  # type: ignore[type-arg]
@@ -410,6 +391,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     start_backend = not args.frontend_only
     start_frontend = not args.backend_only
 
+    if start_frontend and not FRONTEND_DIR.exists():
+        if args.frontend_only:
+            raise LaunchError(
+                "frontend-only mode is unavailable because frontend/ is missing."
+            )
+        print("[launcher] Starting the built-in web UI instead of a separate frontend.")
+        start_frontend = False
+
     if is_frozen():
         start_frontend = False
 
@@ -417,26 +406,19 @@ def main(argv: Iterable[str] | None = None) -> int:
     load_and_prompt_env()
 
     # Set additional environment variables for subprocesses
-    os.environ["OLLAMA_MODEL"] = OLLAMA_MODEL
+    os.environ.setdefault("OLLAMA_MODEL", OLLAMA_MODEL)
 
     if start_frontend:
         ensure_node_tools_available()
         ensure_frontend_dependencies()
-
-    ollama_handle: ManagedHandle | None = None
-    if start_backend:
-        ensure_ollama_cli_available()
-        ollama_handle = maybe_start_ollama_service()
-        pull_ollama_model(OLLAMA_MODEL)
+    else:
+        ensure_frontend_dependencies()
 
     handles: list[ManagedHandle] = []
 
-    if ollama_handle is not None:
-        handles.append(ollama_handle)
-
     if start_backend:
         handles.append(start_backend_handle())
-        webbrowser.open("http://127.0.0.1:8000")
+        webbrowser.open(WEB_UI_URL)
 
     if start_frontend:
         frontend_cmd = ["npm", "start"]
