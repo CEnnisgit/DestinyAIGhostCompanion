@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ghost Companion</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-0: #06101a;
+      --bg-1: #0a1522;
+      --bg-2: rgba(12, 21, 35, 0.86);
+      --bg-3: rgba(17, 29, 44, 0.96);
+      --line: rgba(140, 184, 255, 0.18);
+      --line-strong: rgba(126, 224, 255, 0.34);
+      --text: #edf4ff;
+      --muted: #8ba0c1;
+      --accent: #80e2ff;
+      --accent-strong: #4fb2ff;
+      --gold: #f4c76a;
+      --danger: #ff9a9a;
+      --shadow: 0 30px 120px rgba(0, 0, 0, 0.45);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --font: "Segoe UI", "Trebuchet MS", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(128, 226, 255, 0.12), transparent 28%),
+        radial-gradient(circle at 80% 20%, rgba(79, 178, 255, 0.14), transparent 26%),
+        radial-gradient(circle at bottom right, rgba(244, 199, 106, 0.14), transparent 28%),
+        linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 60%, #0e1d2c 100%);
+    }
+
+    .layout {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 22px;
+      padding: 22px;
+    }
+
+    .panel,
+    .shell {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(9, 16, 26, 0.86), rgba(11, 19, 31, 0.94));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .panel {
+      border-radius: var(--radius-xl);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .shell {
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      min-height: calc(100vh - 44px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .ghost-mark {
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
+      position: relative;
+      background:
+        radial-gradient(circle at center, rgba(128, 226, 255, 0.48), rgba(79, 178, 255, 0.12) 55%, transparent 56%),
+        linear-gradient(145deg, rgba(128, 226, 255, 0.16), rgba(244, 199, 106, 0.18));
+      border: 1px solid rgba(128, 226, 255, 0.32);
+      box-shadow: inset 0 0 40px rgba(128, 226, 255, 0.14);
+    }
+
+    .ghost-mark::before,
+    .ghost-mark::after {
+      content: "";
+      position: absolute;
+      inset: 50%;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+    }
+
+    .ghost-mark::before {
+      width: 20px;
+      height: 20px;
+      background: rgba(237, 244, 255, 0.95);
+      box-shadow: 0 0 18px rgba(237, 244, 255, 0.65);
+    }
+
+    .ghost-mark::after {
+      width: 8px;
+      height: 8px;
+      background: rgba(6, 16, 26, 0.95);
+    }
+
+    .brand-copy h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 0.95;
+      letter-spacing: 0.02em;
+    }
+
+    .brand-copy p,
+    .lede,
+    .status-copy,
+    .footer-note,
+    label span,
+    .hint,
+    .quick-note {
+      color: var(--muted);
+    }
+
+    .brand-copy p {
+      margin: 6px 0 0;
+      line-height: 1.5;
+    }
+
+    .section-title {
+      margin: 0 0 8px;
+      font-size: 12px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .settings {
+      display: grid;
+      gap: 14px;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+    }
+
+    input,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(14, 22, 35, 0.88);
+      color: var(--text);
+      padding: 14px 15px;
+    }
+
+    input:focus,
+    textarea:focus,
+    button:focus {
+      outline: 2px solid rgba(128, 226, 255, 0.36);
+      outline-offset: 2px;
+    }
+
+    .status-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .status-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px 16px;
+      background: rgba(13, 21, 34, 0.78);
+    }
+
+    .status-card strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .shell-header {
+      padding: 28px 30px 18px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(128, 226, 255, 0.08), rgba(244, 199, 106, 0.08)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      font-size: 12px;
+      letter-spacing: 0.26em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    .shell-header h2 {
+      margin: 0;
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: 0.92;
+      max-width: 11ch;
+    }
+
+    .lede {
+      margin: 14px 0 0;
+      max-width: 58ch;
+      line-height: 1.65;
+    }
+
+    .quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 16px 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9, 15, 24, 0.74);
+    }
+
+    .chip {
+      border: 1px solid rgba(128, 226, 255, 0.18);
+      background: rgba(15, 25, 40, 0.88);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+
+    .chat {
+      padding: 24px 28px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.01), transparent 18%),
+        repeating-linear-gradient(
+          0deg,
+          transparent 0,
+          transparent 31px,
+          rgba(139, 160, 193, 0.032) 32px
+        );
+    }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: min(760px, 84%);
+      animation: rise 160ms ease-out;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      text-align: left;
+    }
+
+    .message.ghost,
+    .message.system {
+      align-self: flex-start;
+    }
+
+    .message-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--muted);
+    }
+
+    .bubble {
+      border-radius: 20px;
+      padding: 16px 18px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      border: 1px solid transparent;
+    }
+
+    .message.user .bubble {
+      background: linear-gradient(135deg, rgba(79, 178, 255, 0.28), rgba(128, 226, 255, 0.18));
+      border-color: rgba(128, 226, 255, 0.32);
+    }
+
+    .message.ghost .bubble {
+      background: rgba(19, 30, 46, 0.96);
+      border-color: rgba(244, 199, 106, 0.2);
+    }
+
+    .message.system .bubble {
+      background: rgba(255, 154, 154, 0.1);
+      border-color: rgba(255, 154, 154, 0.34);
+      color: #ffd9d9;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px;
+      padding: 18px 24px 24px;
+      border-top: 1px solid var(--line);
+      background: rgba(8, 13, 21, 0.96);
+    }
+
+    .composer textarea {
+      min-height: 72px;
+      max-height: 180px;
+      resize: vertical;
+    }
+
+    .primary {
+      border: 0;
+      border-radius: 18px;
+      min-width: 132px;
+      min-height: 72px;
+      padding: 0 22px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      color: #04111c;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .primary[disabled] {
+      opacity: 0.7;
+      cursor: wait;
+    }
+
+    .footer-note {
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .panel {
+        order: 2;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .layout {
+        padding: 0;
+        gap: 0;
+      }
+
+      .panel,
+      .shell {
+        border-radius: 0;
+        min-height: auto;
+      }
+
+      .shell {
+        min-height: 100vh;
+      }
+
+      .panel {
+        padding: 18px;
+      }
+
+      .shell-header,
+      .quick-actions,
+      .chat,
+      .composer {
+        padding-left: 18px;
+        padding-right: 18px;
+      }
+
+      .message {
+        max-width: 100%;
+      }
+
+      .composer {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="panel">
+      <div class="brand">
+        <div class="ghost-mark" aria-hidden="true"></div>
+        <div class="brand-copy">
+          <h1>Ghost Companion</h1>
+          <p>Launch-ready local assistant with Destiny styling and bring-your-own runtime settings.</p>
+        </div>
+      </div>
+
+      <section>
+        <h3 class="section-title">Runtime</h3>
+        <div class="settings">
+          <label>
+            <span>Ollama Host</span>
+            <input id="ollamaHost" placeholder="http://127.0.0.1:11434">
+          </label>
+          <label>
+            <span>Ollama Model</span>
+            <input id="ollamaModel" placeholder="phi3">
+          </label>
+          <label>
+            <span>Bungie API Key</span>
+            <input id="bungieApiKey" type="password" placeholder="Optional unless you use Bungie lookups">
+          </label>
+          <div class="hint">Settings stay in this browser only. The server does not provide a shared model or shared Bungie key.</div>
+        </div>
+      </section>
+
+      <section>
+        <h3 class="section-title">Status</h3>
+        <div class="status-grid" id="statusGrid">
+          <div class="status-card">
+            <strong>Backend</strong>
+            <div class="status-copy">Checking local server.</div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h3 class="section-title">How To Use</h3>
+        <div class="footer-note">
+          Point this app at your own local Ollama host and model. If you ask Ghost to look up a Destiny player, add your own Bungie API key here first.
+        </div>
+      </section>
+    </aside>
+
+    <main class="shell">
+      <header class="shell-header">
+        <p class="eyebrow">Destiny 2 Assistant</p>
+        <h2>Ask your Ghost something useful.</h2>
+        <p class="lede">
+          This MVP is tuned for a launchable local experience: chat UI, reusable runtime settings,
+          persistent transcript history, and direct connection to the user's own model stack.
+        </p>
+      </header>
+
+      <section class="quick-actions" id="quickActions">
+        <button class="chip" data-prompt="What activities should I focus on this week?">Weekly priorities</button>
+        <button class="chip" data-prompt="Tell me about player Zavala">Player lookup</button>
+        <button class="chip" data-prompt="Give me a concise explanation of Strand for a returning Destiny 2 player.">Returning player guide</button>
+        <button class="chip" data-prompt="Summarize the lore significance of the Traveler in three paragraphs.">Lore summary</button>
+      </section>
+
+      <section class="chat" id="chat">
+      </section>
+
+      <form class="composer" id="composer">
+        <textarea id="message" placeholder="Type a Destiny question, lore request, or player lookup..." required></textarea>
+        <button class="primary" id="send" type="submit">Transmit</button>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const composer = document.getElementById("composer");
+    const messageInput = document.getElementById("message");
+    const sendButton = document.getElementById("send");
+    const statusGrid = document.getElementById("statusGrid");
+    const quickActions = document.getElementById("quickActions");
+    const ollamaHostInput = document.getElementById("ollamaHost");
+    const ollamaModelInput = document.getElementById("ollamaModel");
+    const bungieApiKeyInput = document.getElementById("bungieApiKey");
+
+    const STORAGE_KEYS = {
+      host: "ghost-companion-ollama-host",
+      model: "ghost-companion-ollama-model",
+      bungie: "ghost-companion-bungie-key",
+      transcript: "ghost-companion-transcript"
+    };
+
+    function saveSettings() {
+      localStorage.setItem(STORAGE_KEYS.host, ollamaHostInput.value.trim());
+      localStorage.setItem(STORAGE_KEYS.model, ollamaModelInput.value.trim());
+      localStorage.setItem(STORAGE_KEYS.bungie, bungieApiKeyInput.value);
+    }
+
+    function loadSettings(defaults) {
+      ollamaHostInput.value = localStorage.getItem(STORAGE_KEYS.host) || defaults.default_ollama_host || "http://127.0.0.1:11434";
+      ollamaModelInput.value = localStorage.getItem(STORAGE_KEYS.model) || defaults.default_ollama_model || "phi3";
+      bungieApiKeyInput.value = localStorage.getItem(STORAGE_KEYS.bungie) || "";
+    }
+
+    function addMessage(role, content) {
+      const wrapper = document.createElement("article");
+      wrapper.className = `message ${role}`;
+
+      const label = document.createElement("div");
+      label.className = "message-label";
+      label.textContent = role === "user" ? "Guardian" : role === "ghost" ? "Ghost" : "System";
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = content;
+
+      wrapper.append(label, bubble);
+      chat.appendChild(wrapper);
+      chat.scrollTop = chat.scrollHeight;
+      persistTranscript();
+      return bubble;
+    }
+
+    function persistTranscript() {
+      localStorage.setItem(STORAGE_KEYS.transcript, chat.innerHTML);
+    }
+
+    function restoreTranscript() {
+      const saved = localStorage.getItem(STORAGE_KEYS.transcript);
+      if (saved) {
+        chat.innerHTML = saved;
+        return;
+      }
+
+      addMessage("ghost", "Ghost online. Connect your own Ollama runtime in the left panel, then ask for lore, strategy, or a Destiny player lookup.");
+    }
+
+    async function loadHealth() {
+      try {
+        const response = await fetch("/health");
+        const data = await response.json();
+        loadSettings(data);
+        statusGrid.innerHTML = `
+          <div class="status-card">
+            <strong>Backend</strong>
+            <div class="status-copy">${data.status}</div>
+          </div>
+          <div class="status-card">
+            <strong>Web UI</strong>
+            <div class="status-copy">${data.web_ui_available ? "Ready" : "Missing"}</div>
+          </div>
+          <div class="status-card">
+            <strong>Runtime Policy</strong>
+            <div class="status-copy">${data.server_requires_byo_keys ? "Bring your own model and Bungie key" : "Shared server config detected"}</div>
+          </div>
+        `;
+      } catch (error) {
+        statusGrid.innerHTML = `
+          <div class="status-card">
+            <strong>Backend</strong>
+            <div class="status-copy">Unreachable</div>
+          </div>
+        `;
+      }
+    }
+
+    async function sendMessage(text) {
+      addMessage("user", text);
+      const pendingBubble = addMessage("ghost", "Linking to your local Ghost shell...");
+
+      saveSettings();
+      sendButton.disabled = true;
+      sendButton.textContent = "Linking";
+
+      try {
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message: text,
+            ollama_host: ollamaHostInput.value.trim(),
+            ollama_model: ollamaModelInput.value.trim(),
+            bungie_api_key: bungieApiKeyInput.value.trim()
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "The request failed.");
+        }
+        pendingBubble.textContent = data.reply || "(empty reply)";
+        persistTranscript();
+      } catch (error) {
+        pendingBubble.parentElement.className = "message system";
+        pendingBubble.textContent = error.message;
+        persistTranscript();
+      } finally {
+        sendButton.disabled = false;
+        sendButton.textContent = "Transmit";
+        messageInput.focus();
+      }
+    }
+
+    composer.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = messageInput.value.trim();
+      if (!text) {
+        return;
+      }
+      messageInput.value = "";
+      await sendMessage(text);
+    });
+
+    messageInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        composer.requestSubmit();
+      }
+    });
+
+    quickActions.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-prompt]");
+      if (!target) {
+        return;
+      }
+      messageInput.value = target.dataset.prompt;
+      messageInput.focus();
+    });
+
+    [ollamaHostInput, ollamaModelInput, bungieApiKeyInput].forEach((input) => {
+      input.addEventListener("change", saveSettings);
+      input.addEventListener("blur", saveSettings);
+    });
+
+    restoreTranscript();
+    loadHealth();
+    messageInput.focus();
+  </script>
+</body>
+</html>

@@ -2,3 +2,7 @@ fastapi
 pydantic
 python-dotenv
 requests
+uvicorn
+PyJWT
+bcrypt
+passlib

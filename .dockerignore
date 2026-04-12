@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+frontend/node_modules/
+frontend/build/
+logs/
+cache/
+data/
+*.db
+*.db-journal
+.env
