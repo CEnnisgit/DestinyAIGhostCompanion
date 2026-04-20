@@ -1,138 +1,77 @@
 # Auth Design Worksheet
 
-> A guided learning journey for designing authentication from scratch.  
-> Use this as a reference while researching. Capture your decisions as you learn.
+> A guided learning journey for designing authentication from scratch.
+> Adapted for Destiny AI Ghost Companion — Bungie OAuth2 SSO.
 
 ---
 
 ## Concept 1: Identity vs Authentication vs Authorization
 
-Before designing, understand what you're actually building:
+| Term | What It Means | Destiny Ghost Example |
+|------|---------------|----------------------|
+| **Identity** | Who is this person? | Bungie Membership ID, platform type |
+| **Authentication (AuthN)** | Prove you are who you claim to be | Bungie OAuth2 SSO callback |
+| **Authorization (AuthZ)** | What are you allowed to do? | Bungie API scopes (MoveEquipItems) |
 
-| Term | What It Means | Example |
-|------|---------------|---------|
-| **Identity** | Who is this person? | User ID, email, profile |
-| **Authentication (AuthN)** | Prove you are who you claim to be | Login with password |
-| **Authorization (AuthZ)** | What are you allowed to do? | Role-based access |
-
-> **Why it matters:** Many systems conflate these. Keeping them separate makes your design cleaner. Your "auth module" might only handle AuthN, with AuthZ handled elsewhere.
-
-### Your Decision
-- [ ] This module handles: Authentication only
-- [ ] This module handles: Authentication + Authorization
-- [ ] This module handles: Identity + Authentication + Authorization
+### Our Decision
+- [x] This module handles: Authentication only (AuthZ is handled by Bungie scopes)
 
 ---
 
 ## Concept 2: Credential Types
 
-How do users prove their identity?
-
 | Method | How It Works | Trade-offs |
 |--------|--------------|------------|
 | **Password** | User knows a secret | Simple, but weak if passwords are bad |
 | **Magic Link** | Email a login link | No password to forget, but requires email access |
-| **OAuth/SSO** | Delegate to Google, etc. | Convenient, but you depend on external providers |
+| **OAuth/SSO** | Delegate to Bungie | Convenient; user trusts Bungie, not us |
 | **API Key** | Long-lived secret token | Good for machines, bad for humans |
-| **Passkey/WebAuthn** | Cryptographic key on device | Most secure, but newer/complex |
 
-> **Research prompt:** Search "passwordless authentication pros cons" if considering alternatives to passwords.
-
-### Your Decision
-Primary method: _____________  
-Secondary/future: _____________
+### Our Decision
+Primary method: **Bungie OAuth2 SSO** (ADR 005)
+Secondary/future: None planned — single identity provider
 
 ---
 
 ## Concept 3: Password Storage
 
-**NEVER store plain-text passwords.** You store a *hash* — a one-way transformation.
-
-| Algorithm | Status | Notes |
-|-----------|--------|-------|
-| **MD5, SHA1** | ❌ Broken | Never use for passwords |
-| **bcrypt** | ✅ Good | Battle-tested, widely supported |
-| **scrypt** | ✅ Good | Memory-hard (resists GPU attacks) |
-| **Argon2** | ✅ Best | Winner of Password Hashing Competition (2015) |
-
-> **Why it matters:** If your database leaks, attackers try to reverse hashes. Modern algorithms are intentionally slow to make this impractical.
-
-> **Research prompt:** "Argon2 vs bcrypt 2024" for current recommendations.
-
-### Your Decision
-Algorithm: _____________  
-Rationale: _____________
+**Not applicable.** We never handle user passwords. Bungie handles credential verification entirely. We only store OAuth tokens (access + refresh).
 
 ---
 
 ## Concept 4: Session Management
 
-After login, how do you "remember" the user is authenticated?
+### Option B: Stateless Tokens (OAuth2)
+- Bungie issues a signed access token containing scopes
+- Client sends token with every Bungie API request
+- Token expires after ~60 minutes; refresh token used to obtain new one
 
-### Option A: Server-Side Sessions
-- Server stores session data (in memory, Redis, DB)
-- Client gets a session ID cookie
-- Every request: server looks up session
+### Our Decision
+- [x] Stateless OAuth2 tokens (Bungie-issued, not self-signed JWTs)
 
-| Pros | Cons |
-|------|------|
-| Easy to revoke (delete session) | Requires server storage |
-| Can store arbitrary data | Harder to scale horizontally |
-
-### Option B: Stateless Tokens (JWT)
-- Server issues a signed token containing user data
-- Client sends token with every request
-- Server verifies signature, trusts the data
-
-| Pros | Cons |
-|------|------|
-| No server storage needed | Can't revoke without extra work |
-| Scales horizontally easily | Token size can grow |
-| Works well for APIs | Must handle expiration carefully |
-
-> **Research prompt:** "JWT vs session cookies" and "JWT security best practices"
-
-### Your Decision
-- [ ] Server-side sessions
-- [ ] Stateless JWT
-- [ ] Hybrid (short JWT + refresh mechanism)
-
-Rationale: _____________
+Rationale: We are a consumer of Bungie's identity system, not a provider. We store their tokens, we don't mint our own.
 
 ---
 
 ## Concept 5: Token Lifetimes
 
-If using tokens, how long should they live?
-
 ### Access Token
-- Used for every API request
-- **Short-lived** = more secure (less time for stolen token to be used)
-- **Long-lived** = better UX (fewer refreshes)
-
-| Duration | Use Case |
-|----------|----------|
-| 5-15 min | High security (banking) |
-| 15-60 min | Standard web apps |
-| Hours/days | Low-risk internal tools |
+- Bungie access tokens: **~60 minutes**
+- Used for every Bungie API call (equip, transfer, profile fetch)
 
 ### Refresh Token
+- Bungie refresh tokens: **~90 days**
 - Used only to get new access tokens
-- Lives longer than access token
-- **Critical:** Must be stored securely (HttpOnly cookie, not localStorage)
+- Stored securely in local SQLite (ADR 004 — encrypted at rest)
 
-> **Why it matters:** If an access token is stolen, damage is limited to its lifetime. Refresh tokens are higher-value targets.
-
-### Your Decision
-Access token lifetime: _____________  
-Refresh token lifetime: _____________  
-Refresh token storage: _____________
+### Our Decision
+Access token lifetime: **~60 min** (Bungie-controlled)
+Refresh token lifetime: **~90 days** (Bungie-controlled)
+Refresh token storage: **Local encrypted SQLite** (never localStorage)
 
 ---
 
 ## Concept 6: Token Storage (Client-Side)
-
-Where does the client keep tokens?
 
 | Location | Security | XSS Vulnerable? | CSRF Vulnerable? |
 |----------|----------|-----------------|------------------|
@@ -140,121 +79,63 @@ Where does the client keep tokens?
 | **sessionStorage** | Low | ✅ Yes | No |
 | **HttpOnly Cookie** | High | No | ✅ Needs protection |
 | **Memory only** | Highest | No | No |
+| **Encrypted SQLite** | High | No | No |
 
-> **Key insight:** HttpOnly cookies can't be read by JavaScript, so XSS can't steal them. But you need CSRF protection.
-
-> **Research prompt:** "XSS vs CSRF attacks" and "HttpOnly cookie security"
-
-### Your Decision
-Access token stored in: _____________  
-Refresh token stored in: _____________  
-CSRF protection approach: _____________
+### Our Decision
+Access token stored in: **Rust backend memory** (never exposed to JS)
+Refresh token stored in: **Encrypted SQLite** via `crates/db` TokenStoragePort
+CSRF protection approach: **N/A** — tokens never sent via cookies; API is localhost-only
 
 ---
 
 ## Concept 7: Password Reset Flow
 
-How do users recover access?
-
-### Standard Flow
-1. User requests reset → you send email with token
-2. User clicks link → lands on reset page with token in URL
-3. User submits new password → you verify token, update password
-
-### Critical Security Questions
-- **Token lifetime?** Too long = insecure. Too short = bad UX. (Typically 1-24 hours)
-- **One-time use?** Should token be invalid after use? (Yes)
-- **Rate limiting?** Prevent enumeration attacks (Yes, strict)
-- **Generic responses?** Don't reveal if email exists ("If account exists, email sent")
-
-> **Research prompt:** "password reset token security best practices"
-
-### Your Decision
-Token lifetime: _____________  
-Token storage: [ ] DB / [ ] Signed URL / [ ] Other  
-Email reveals account existence: [ ] Yes / [ ] No
+**Not applicable.** Bungie handles all credential recovery. If a user forgets their Bungie password, they go to bungie.net.
 
 ---
 
 ## Concept 8: Rate Limiting
 
-Authentication endpoints are attack targets.
-
 | Attack | What Happens | Mitigation |
 |--------|--------------|------------|
-| **Brute force** | Try many passwords | Rate limit per account |
-| **Credential stuffing** | Try leaked password lists | Rate limit per IP + CAPTCHA |
-| **Enumeration** | Discover valid emails | Generic error messages |
+| **Brute force** | N/A — no passwords | N/A |
+| **Token abuse** | Excessive Bungie API calls | ADR 010: Serial mutations, no parallel requests |
+| **Enumeration** | N/A — no user registration | N/A |
 
-### Your Decision
-Login rate limit: _____ attempts per _____ window  
-Register rate limit: _____ per _____  
-Password reset rate limit: _____ per _____
+### Our Decision
+Bungie API rate limit: **25 requests/sec** (Bungie-enforced)
+Our self-imposed limit: **Serial execution only** (ADR 010)
 
 ---
 
 ## Concept 9: Multi-Tenancy
 
-Does your auth need to understand organizational boundaries?
+### Our Decision
+- [x] Single tenant (no org boundaries)
 
-| Model | Description |
-|-------|-------------|
-| **Single tenant** | One organization, simple |
-| **Multi-tenant (shared)** | Multiple orgs share DB, isolated by tenant ID |
-| **Multi-tenant (isolated)** | Separate DB per org |
-
-> **Why it matters:** If Company A's admin shouldn't see Company B's users, you need tenant isolation from day one.
-
-### Your Decision
-- [ ] Single tenant (no org boundaries)
-- [ ] Multi-tenant (tenant ID in token claims)
+Rationale: This is a single-player desktop companion app. Each user has 1 Bungie account. There are no organizational boundaries.
 
 ---
 
 ## Concept 10: What Goes in the Token?
 
-JWT payload contains "claims" — data about the user.
+Bungie's OAuth tokens contain scopes. We store:
 
-### Standard Claims
-- `sub` (subject): user ID
-- `iat` (issued at): timestamp
-- `exp` (expires at): timestamp
-
-### Custom Claims
-- Role? Company ID? Permissions?
-
-> **Trade-off:** More data = bigger token, but fewer DB lookups. Less data = smaller token, but more lookups.
-
-### Your Decision
-Token will include:
-- [ ] userId
-- [ ] email
-- [ ] role
-- [ ] companyId (if multi-tenant)
-- [ ] Other: _____________
+### Stored Claims (in our SQLite)
+- [x] Bungie Membership ID
+- [x] Membership Platform Type (Xbox, PSN, Steam, etc.)
+- [x] Access Token (encrypted)
+- [x] Refresh Token (encrypted)
+- [x] Expiration Timestamp
 
 ---
 
 ## Summary: Critical Decisions Checklist
 
-Before coding, you should have answers for:
-
-- [ ] Password hashing algorithm
-- [ ] Session strategy (stateful vs stateless)
-- [ ] Access token lifetime
-- [ ] Refresh token lifetime and storage
-- [ ] Client-side token storage approach
-- [ ] Password reset token lifetime
-- [ ] Rate limiting strategy
-- [ ] What claims go in the token
-- [ ] Multi-tenancy model (if applicable)
-
----
-
-## Research Queue
-
-Topics to look up as you work through this:
-
-- [ ] _____________
-- [ ] _____________
-- [ ] _____________
+- [x] No password storage — delegated to Bungie SSO
+- [x] Session strategy — stateless Bungie OAuth2 tokens
+- [x] Access token lifetime — ~60 min (Bungie-controlled)
+- [x] Refresh token lifetime — ~90 days (Bungie-controlled)
+- [x] Client-side token storage — encrypted SQLite, never browser
+- [x] Rate limiting strategy — serial execution (ADR 010)
+- [x] Single-tenant model — one player, one Bungie account
