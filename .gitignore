@@ -27,3 +27,6 @@ ghost_companion.db
 ghost_companion.db-journal
 data/*.db
 data/*.db-journal
+
+# Rust build artifacts
+/target/
