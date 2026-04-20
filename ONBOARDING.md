@@ -206,4 +206,64 @@ The existing `webapp/index.html` contains a **production-quality Destiny 2 desig
 
 ---
 
+## 8. Agent Workflows (`.cortex/workflows/`)
+
+These are slash commands you can invoke in your AI coding agent. They automate repetitive engineering processes. Here are the most important ones, organized by when you'll use them.
+
+### 🟢 Every Session
+| Workflow | When to Run | What It Does |
+|:---------|:------------|:-------------|
+| `/start-work` | **First thing, every session** | Checks git status, identifies your branch, loads context. |
+| `/onboard` | **First session on this repo** | Full context recovery — reads roadmap, ADRs, and domain code. |
+| `/commit` | **Before every commit** | Formats a Conventional Commit with the correct scope. |
+
+### 🔵 Starting & Finishing Phase Work
+| Workflow | When to Run | What It Does |
+|:---------|:------------|:-------------|
+| `/start-subphase` | **When opening a new Phase (e.g., 4A)** | Scaffolds the 4-artifact lifecycle: journal entry, implementation matrix, and working checklist. |
+| `/maintain-subphase` | **During active work on a phase** | Updates the journal, checks off matrix items, runs mid-session audits. |
+| `/finish-subphase` | **When a phase's verification checks all pass** | Runs a spec audit, generates a traceability proof, and marks the phase complete in the roadmap. |
+
+### 🟡 Quality Gates (Run After Major Changes)
+| Workflow | When to Run | What It Does |
+|:---------|:------------|:-------------|
+| `/audit-crate` | **After adding files to a crate** | Audits `crates/db/` or `crates/api/` for internal structure compliance. |
+| `/audit-hexagonal` | **After implementing an adapter** | Verifies the crate respects hexagonal boundaries (no domain imports in infrastructure, no `reqwest` in domain, etc.). |
+| `/adr-check` | **After making a design decision** | Scans the conversation for implicit decisions that should be captured as an ADR. |
+| `/adr-capture` | **When you decide to record an ADR** | Generates a draft ADR document from the current conversation context. |
+
+### 🟣 Documentation
+| Workflow | When to Run | What It Does |
+|:---------|:------------|:-------------|
+| `/pda-during-implementation` | **While building Phase 4/5** | Populates DDD module design docs and maintains the Change Log Directory. |
+| `/pda-sync-feature` | **After completing a single feature** | Lightweight sync of DDD docs for just one feature. |
+| `/doc-audit` | **Periodically** | Finds stale or missing documentation across the repo. |
+| `/log-feature` | **After completing a feature** | Logs the completion in the daily journal (`docs/journal/`). |
+| `/trace-request` | **When debugging or verifying a flow** | Traces a request from the frontend through axum → domain saga → port → adapter → external API. |
+
+### 📋 Advanced (Spec & Traceability)
+| Workflow | When to Run | What It Does |
+|:---------|:------------|:-------------|
+| `/create-implementation-matrix` | **At start of a phase** | Creates a comprehensive checklist matrix mapping every deliverable. |
+| `/create-spec-audit` | **At end of a phase** | Audits code against the spec to catch drift. |
+| `/create-traceability-matrix` | **At end of a phase** | Creates an end-to-end trace from requirement → ADR → code → test. |
+| `/design-module` | **Before implementing a new bounded context** | Generates a learning-focused design worksheet. |
+
+### Typical Phase 4 Session Flow
+```
+/start-work          → Load context, check branch
+/start-subphase      → Scaffold Phase 4A artifacts
+  ... implement ...
+/commit              → Commit with proper scope
+/audit-crate         → Verify crate structure
+/audit-hexagonal     → Verify port boundaries
+/adr-check           → Catch any undocumented decisions
+/maintain-subphase   → Update journal and matrix
+  ... more work ...
+/finish-subphase     → Close out Phase 4A, run spec audit
+/log-feature         → Log in daily journal
+```
+
+---
+
 Welcome back to the Ghost Companion. Eyes up, Guardian.
