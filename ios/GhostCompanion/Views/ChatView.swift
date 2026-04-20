@@ -1,90 +1,98 @@
 import SwiftUI
 
 struct ChatView: View {
-    @EnvironmentObject private var authStore: AuthStore
-    @EnvironmentObject private var chatStore: ChatStore
-    @State private var draft = ""
+    @Environment(AppState.self) private var appState
+    @Environment(ChatViewModel.self) private var chat
+    @Environment(ConversationsViewModel.self) private var conversations
+
+    @Binding var drawerOpen: Bool
+    @Binding var showSettings: Bool
+    @State private var showVoiceSheet: Bool = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if authStore.isAuthenticated {
-                    VStack(spacing: 0) {
-                        if let errorMessage = chatStore.errorMessage {
-                            Text(errorMessage)
-                                .font(.footnote)
-                                .foregroundStyle(.red)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal)
-                                .padding(.top, 8)
-                        }
-
-                        ScrollViewReader { proxy in
-                            List(chatStore.messages) { message in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(message.role == "assistant" ? "Ghost" : "You")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text(message.content.isEmpty && message.role == "assistant" ? "Thinking..." : message.content)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .listRowSeparator(.hidden)
-                                .id(message.id)
-                            }
-                            .listStyle(.plain)
-                            .onChange(of: chatStore.messages) { _, messages in
-                                if let lastID = messages.last?.id {
-                                    withAnimation {
-                                        proxy.scrollTo(lastID, anchor: .bottom)
-                                    }
-                                }
-                            }
-                        }
-
-                        HStack(alignment: .bottom, spacing: 12) {
-                            TextField("Ask Ghost", text: $draft, axis: .vertical)
-                                .textFieldStyle(.roundedBorder)
-                                .lineLimit(1 ... 5)
-
-                            Button(chatStore.isStreaming ? "..." : "Send") {
-                                let outgoing = draft
-                                draft = ""
-                                Task {
-                                    await chatStore.send(outgoing, using: authStore)
-                                }
-                            }
-                            .disabled(chatStore.isStreaming || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .buttonStyle(.borderedProminent)
-                        }
-                        .padding()
-                    }
-                } else {
-                    SignInView()
-                }
+        VStack(spacing: 0) {
+            header
+            if chat.isEmpty {
+                EmptyHeroView(onSend: { chat.send($0) }, onMic: { showVoiceSheet = true })
+            } else {
+                messageList
+                ComposerView(
+                    isStreaming: chat.isStreaming,
+                    onSend: { chat.send($0) },
+                    onStop: { chat.stop() },
+                    onMic: { showVoiceSheet = true }
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
             }
-            .navigationTitle("Chat")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Button("New Chat") {
-                            Task {
-                                await chatStore.createConversation(using: authStore)
-                            }
-                        }
-                        if !chatStore.conversations.isEmpty {
-                            Divider()
-                        }
-                        ForEach(chatStore.conversations) { conversation in
-                            Button(conversation.name) {
-                                Task {
-                                    await chatStore.openConversation(conversation.id, using: authStore)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("Chats", systemImage: "sidebar.left")
+            if let error = chat.errorMessage {
+                ErrorBanner(message: error) { chat.errorMessage = nil }
+            }
+        }
+        .sheet(isPresented: $showVoiceSheet) {
+            VoiceInputSheet { text in
+                showVoiceSheet = false
+                chat.send(text)
+            }
+            .preferredColorScheme(.dark)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            HamburgerButton {
+                withAnimation(.spring(response: 0.3)) { drawerOpen.toggle() }
+            }
+            Spacer()
+            Button {
+                showSettings = true
+            } label: {
+                HStack(spacing: 6) {
+                    Text(Persona(id: appState.settings.persona).displayName)
+                        .font(Typography.row)
+                        .foregroundStyle(Theme.textPrimary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Theme.backgroundElevated, in: Capsule())
+            }
+            Spacer()
+            // Symmetry spacer matching hamburger width so the persona pill stays visually centred.
+            Color.clear.frame(width: 40, height: 40)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+    }
+
+    private var messageList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    ForEach(Array(chat.messages.enumerated()), id: \.element.id) { idx, msg in
+                        ChatMessageRow(
+                            message: msg,
+                            showSpacerAbove: idx > 0 && chat.messages[idx - 1].role != msg.role,
+                            onRegenerate: { chat.regenerate(from: msg) }
+                        )
+                        .id(msg.id)
                     }
                 }
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .onTapGesture { KeyboardDismiss.resign() }
+            .onChange(of: chat.messages.last?.id) { _, newValue in
+                if let newValue { withAnimation { proxy.scrollTo(newValue, anchor: .bottom) } }
+            }
+            .onChange(of: chat.messages.last?.content) { _, _ in
+                if let id = chat.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
             }
         }
     }

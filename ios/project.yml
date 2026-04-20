@@ -1,31 +1,63 @@
 name: GhostCompanion
 options:
+  bundleIdPrefix: com.ghostcompanion
   deploymentTarget:
     iOS: "17.0"
+  createIntermediateGroups: true
+  defaultConfig: Debug
+  xcodeVersion: "15.0"
+configs:
+  Debug: debug
+  Release: release
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    TARGETED_DEVICE_FAMILY: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    GENERATE_INFOPLIST_FILE: NO
 targets:
   GhostCompanion:
     type: application
     platform: iOS
     sources:
-      - GhostCompanion
+      - path: GhostCompanion
+    info:
+      path: GhostCompanion/Info.plist
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.cennis.ghostcompanion
-        PRODUCT_NAME: GhostCompanion
-        SWIFT_VERSION: "5.9"
-        TARGETED_DEVICE_FAMILY: "1"
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
-        INFOPLIST_KEY_UILaunchScreen_Generation: true
-        INFOPLIST_KEY_CFBundleDisplayName: Ghost Companion
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.games
-        INFOPLIST_KEY_CFBundleURLTypes:
-          - CFBundleURLName: Ghost Companion Auth
-            CFBundleURLSchemes:
-              - ghostcompanion
-        INFOPLIST_KEY_NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-        GENERATE_INFOPLIST_FILE: true
-        DEVELOPMENT_TEAM: ""
-        CODE_SIGN_STYLE: Automatic
-    scheme:
-      testTargets: []
+        PRODUCT_BUNDLE_IDENTIFIER: com.ghostcompanion.ios
+        INFOPLIST_FILE: GhostCompanion/Info.plist
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    dependencies:
+      - sdk: Speech.framework
+      - sdk: AVFoundation.framework
+      - sdk: AuthenticationServices.framework
+      - sdk: Security.framework
+  GhostCompanionTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: GhostCompanionTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ghostcompanion.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: GhostCompanion
+schemes:
+  GhostCompanion:
+    build:
+      targets:
+        GhostCompanion: all
+        GhostCompanionTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - GhostCompanionTests
