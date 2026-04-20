@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use super::value_objects::{BungieMembershipId, BungieOAuthToken};
+use crate::auth::membership::BungieMembershipId;
+use crate::auth::token::BungieOAuthToken;
 
 /// Secondary Port (Driven): Allows the Auth domain to persist tokens securely
 #[async_trait]

@@ -1,6 +1,7 @@
 use std::sync::Arc;
-use crate::auth::value_objects::{BungieOAuthToken, BungieMembershipId};
-use crate::auth::adapters::{TokenStoragePort, BungieIdentityProviderPort};
+use crate::auth::token::BungieOAuthToken;
+use crate::auth::membership::BungieMembershipId;
+use crate::auth::ports::{TokenStoragePort, BungieIdentityProviderPort};
 
 /// The Orchestrator Aggregate that handles the SSO flow
 pub struct OAuthSessionSaga {
