@@ -1,65 +1,16 @@
-# SFR-PR: Processing Requirements
+# Functional Requirements: Processing (SFR-PR)
 
-> **Parent:** [SFR Index](../README.md) | **Prev:** [SFR-IO](./SFR-IO_input-output.md) | **Next:** [SFR-BR](./SFR-BR_business-rules.md)
+## Data Processing (SFR-PRDP)
+- **`SFR-PRDP-01` (Dataset Generation)**: The system supports dedicated pipelines for structuring and generating instructional datasets to fine-tune local models on Destiny logic.
+- **`SFR-PRDP-02` (Item Name Resolution)**: The system must perform fuzzy-matching string resolution against the Destiny Manifest to translate spoken phrases ("equip sun bucket") to exact item hashes ("Sunshot").
+- **`SFR-PRDP-03` (Item Location Resolution)**: The system must scan the master profile response to locate the target `instanceId` across all characters, vault space, and postmaster allocations.
+- **`SFR-PRDP-04` (Lore Data Retrieval)**: The system must extract contextual strings from the Bungie Manifest lore definitions when constructing inputs for conversational LLM queries.
 
-## Sub-Types
-- [SFR-PRC (Calculation)](#sfr-prc-calculation)
-- [SFR-PRDM (Decision Making)](#sfr-prdm-decision-making)
-- [SFR-PRDP (Data Manipulation)](#sfr-prdp-data-manipulation)
+## Complex Calculations/Algorithms (SFR-PRC)
+- **`SFR-PRC-01` (Speech-to-Text)**: Audio bytes captured from the client must be transcribed into raw text using local or browser-fallback STT algorithms.
+- **`SFR-PRC-02` (Persona Prompt Construction)**: The system must format the final prompt supplied to the LLM interface by aggregating the selected Persona system prompt, the immediate user transcript, and any fetched inventory state data.
+- **`SFR-PRC-03` (Browser Speech Fallback)**: The front-end clients must implement native `SpeechRecognition` and `SpeechSynthesis` Web APIs as a fallback when server-side STT/TTS modules are unavailable.
 
----
-
-## SFR-PRC: Calculation
-
-### Deadline Computation
-
-| Code | Description | PRD Ref |
-|------|-------------|---------|
-| `SFR-PRC-01` | **GPS1 Due Date:** Calculate `Inspection Date + 30 days` as GPS1 report due date to owner. | §Deliverables |
-| `SFR-PRC-02` | **GPS2 Due Date:** Calculate `Inspection Date + 60 days` as GPS2 certification due date to DOB. | §Deliverables |
-| `SFR-PRC-03` | **Correction Window:** If defects require correction, calculate `Inspection Date + 120 days` (or +180 if extension granted). | §Deliverables |
-| `SFR-PRC-04` | **Compliance Year:** Determine building's 4-year inspection cycle based on Community District sub-cycle (A/B/C/D). | §2.3 |
-| `SFR-PRC-05` | **[TBD] Sub-Cycle Map:** Exact mapping of Community Districts to Sub-Cycles (A/B/C/D) to be defined. | GAP-02 |
-
-### Time Metrics
-
-| Code | Description | PRD Ref |
-|------|-------------|---------|
-| `SFR-PRC-10` | **Time-to-Capture:** Track timestamp from "Capture Started" to "Submit" for monitoring <2 minute target. | §0.2, §5.2 |
-
----
-
-## SFR-PRDM: Decision Making
-
-### Dispatch Logic
-
-| Code | Description | PRD Ref |
-|------|-------------|---------|
-| `SFR-PRDM-01` | **Plumber Assignment:** LMP selects which Plumber (Technician) to assign to a job. System validates Plumber is active. | §4.1.1 |
-| `SFR-PRDM-02` | **Auto-Routing (Future):** (Not in v0) System could suggest nearest available Plumber. | N/A |
-
-### State Transitions
-
-| Code | Description | PRD Ref |
-|------|-------------|---------|
-| `SFR-PRDM-10` | **Completeness Check:** Before allowing "Submit to LMP", system validates all required GPS1 fields are filled and at least 1 photo attached. | §4.1.3 |
-| `SFR-PRDM-11` | **Approve/Return Decision:** LMP reviews submission. If complete, advances to FINALIZED. If incomplete, returns to Plumber with notes. | §4.1.4 |
-| `SFR-PRDM-12` | **Escalation Check:** If Plumber flags "Stop-the-line" condition, system alerts LMP immediately (push/notification). | §1.3 |
-
----
-
-## SFR-PRDP: Data Manipulation
-
-### Sorting & Filtering
-
-| Code | Description | PRD Ref |
-|------|-------------|---------|
-| `SFR-PRDP-01` | **Sort by Scheduled Date:** Assigned Jobs list defaults to soonest-first. | §3.1 |
-| `SFR-PRDP-02` | **Filter by Status:** LMP can filter job queue by status (e.g., "Needs Review", "Approaching Deadline"). | §3.2 |
-| `SFR-PRDP-03` | **Search by Address:** LMP can search job history by address string or building ID. | §4.1.7 |
-
-### Data Aggregation
-
-| Code | Description | PRD Ref |
-|------|-------------|---------|
-| `SFR-PRDP-10` | **Funnel Counts:** Track count of jobs at each status for LMP dashboard overview. | §5.2 |
+## Data Manipulation (SFR-PRDM)
+- **`SFR-PRDM-01` (Intent Classification)**: The intent parser must confidently categorize a transcribed user query into either an "Actionable Matrix" (Equip/Vault) or a "Conversational Matrix" (Lore inquiry/Jokes).
+- **`SFR-PRDM-02` (Intent-to-Payload Translation)**: Actionable matrix intents must be converted directly into structured parameter sets suitable for the Inventory Execution Module.
