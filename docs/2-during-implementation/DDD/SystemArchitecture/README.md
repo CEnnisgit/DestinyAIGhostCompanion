@@ -1,21 +1,8 @@
-# System Architecture
+# Detailed Design: System Architecture
 
-> **Parent:** [Detailed Design Document (DDD)](../README.md)
+> **Phase Focus:** Phase 2 (During-Implementation)
+> **Goal:** Solidify the technological framework and architectural layout of the Cargo Monorepo.
 
-This section covers the **System Architecture**, the second component of the DDD.
-
-## Components
-
-Per the PDA-SDD specification, this section consists of:
-
-1.  **[High-Level Diagram](HighLevelDiagram.md)**
-    *   A general description of the system architecture, represented diagrammatically.
-    *   Maps DDD Modules to system components.
-
-2.  **[Technology Stack](TechnologyStack.md)**
-    *   An explanation of the employed programming languages, patterns, and tools.
-
-## Supporting Documentation
-
-*   **[Layered Architecture Definitions](LayerDefinitions.md)** - Detailed explanation of the architectural pattern.
-*   **[Security Strategy](SecurityStrategy.md)** - Detailed explanation of authentication and authorization patterns.
+## Sub-Documents
+- `TechnologyStack.md`: Formal verification of Rust, Electron, Docker, and Postgres dependencies.
+- `HighLevelDiagram.md`: Mermaid topologies visualizing the macro flow between `apps/` and `crates/`.
