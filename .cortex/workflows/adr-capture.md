@@ -21,12 +21,7 @@ Ask/determine:
 
 ## 2. Determine ADR Number
 
-// turbo
-```bash
-ls docs/adr/*.md | tail -1
-```
-
-Next number = last number + 1 (use 4-digit format: 0004, 0005, etc.)
+Check `docs/adr/README.md` — the **Next ADR** line at the bottom has the next number.
 
 ## 3. Generate Draft
 
@@ -35,8 +30,8 @@ Create file at `docs/adr/XXXX-title-slug.md` using this template:
 ```markdown
 # ADR-XXXX: [Decision Title]
 
-**Status:** Proposed  
-**Date:** [Today's date]  
+**Status:** Proposed
+**Date:** [Today's date]
 **Deciders:** Development Team
 
 ## Context
@@ -93,8 +88,23 @@ Present draft to user with:
 
 After user approval:
 1. Update status to "Accepted" if approved
-2. Update `docs/adr/README.md` index table
-3. Commit with message: `docs: add ADR-XXXX [title]`
+2. Commit the ADR file: `docs: add ADR-XXXX [title]`
+
+## 6. Update README Index
+
+After the ADR is committed:
+
+1. Add a row to the **chronological index** table in `docs/adr/README.md`
+2. Add a row to the appropriate **module section** (iam, operations, workflows, directory, global)
+3. If the ADR affects multiple modules, add it to each relevant section
+4. Increment the **Next ADR** number at the bottom of the file
+5. Commit separately: `docs(adr): update README index for ADR-XXXX`
+
+
+> **Note:** `docs/adr/EVOLUTION.md` tracks how ADRs evolve over time across
+> architectural arcs. It is updated at phase boundaries (via `/finish-subphase`),
+> not per-ADR. If this ADR is clearly part of an arc, you may update EVOLUTION.md
+> now — but it's not required as part of capture.
 
 ## Quick Capture Mode
 
@@ -107,3 +117,5 @@ Example:
 ```
 /adr-capture "Chose rate limiting with sliding window instead of fixed window for better burst handling"
 ```
+
+Quick capture still requires step 6 (README index update).

@@ -4,20 +4,23 @@ description: Generate a learning-focused design worksheet for a new module
 
 # Design Module Worksheet
 
-This workflow generates a tailored learning worksheet for a new module, covering domain-specific concepts, trade-offs, and critical decisions.
+This workflow generates a tailored learning worksheet for a new module, covering
+domain-specific concepts, trade-offs, and critical decisions.
 
 ## When to Use
-- Before starting implementation of a new module
+
+- Before starting implementation of a new module or bounded context
 - When entering an unfamiliar domain (auth, payments, scheduling, etc.)
 - When you want to research and understand before coding
+- Pairs well with the research phase of `/start-subphase`
 
 ## Workflow Steps
 
 ### 1. Identify the Module Domain
 
 Ask the user:
-- What is the module name?
-- What problem domain does it cover? (e.g., authentication, job scheduling, compliance forms)
+- What is the module name / bounded context?
+- What problem domain does it cover? (e.g., authentication, RLS, compliance forms)
 - What's the pilot/MVP scope? (what's in vs out for now)
 
 ### 2. Research Domain Concepts
@@ -27,12 +30,12 @@ Before generating the worksheet, research:
 - Standard terminology
 - Typical trade-offs and decision points
 - Security or compliance considerations specific to this domain
+- How existing PCD modules handle similar concerns
 
 ### 3. Generate the Worksheet
 
-Create a markdown file at: `docs/design-worksheets/{module-name}.md`
-
-The worksheet should follow this structure:
+Create a markdown artifact or save to the sub-phase research docs. The worksheet
+should follow this structure:
 
 ```markdown
 # {Module Name} Design Worksheet
@@ -53,7 +56,7 @@ The worksheet should follow this structure:
 > **Research prompt:** "{search terms for learning more}"
 
 ### Your Decision
-{Space for user to capture their choice and rationale}
+{Space to capture choice and rationale}
 
 ---
 
@@ -68,7 +71,6 @@ The worksheet should follow this structure:
 Before coding, you should have answers for:
 - [ ] {Decision 1}
 - [ ] {Decision 2}
-- [ ] ...
 
 ---
 
@@ -78,18 +80,28 @@ Topics to look up:
 - [ ] _____________
 ```
 
-### 4. Present to User
+### 4. Connect to DDD Specs
+
+After the worksheet is filled in, the decisions captured should feed directly into
+the DDD spec design:
+
+- Each "Your Decision" → becomes a section in the entity's DDD spec
+- Each trade-off → may become an ADR if significant enough
+- The research queue → drives the research phase of the sub-phase
+
+### 5. Present to User
 
 After generating, let the user know:
-- Where the worksheet is saved
 - A summary of concepts covered
-- That they should take time to research and fill it in
+- Which decisions are critical path (block spec design)
+- Which are deferrable (can be decided during implementation)
 
 ## Example Domains and Concepts
 
 | Domain | Example Concepts to Cover |
 |--------|--------------------------|
 | **Auth** | Passwords, sessions, tokens, OAuth, MFA, rate limiting |
+| **RLS** | Row-level security, workspace isolation, policy engines |
 | **Payments** | Idempotency, webhooks, refunds, fraud, PCI compliance |
 | **Job Scheduling** | State machines, async processing, retries, dead letters |
 | **File Storage** | Upload strategies, CDNs, signed URLs, virus scanning |
@@ -100,4 +112,5 @@ After generating, let the user know:
 ## Output
 
 - A learning-focused worksheet tailored to the module's domain
-- Saved in `docs/design-worksheets/` for reference
+- Decisions that feed into DDD spec design
+- ADR candidates for significant trade-offs
