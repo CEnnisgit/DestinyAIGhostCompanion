@@ -5,8 +5,8 @@
 ## Branch Naming
 
 ```
-feat/compliance-job-actions
-fix/auth-login-rate-limit
+feat/inventory-cross-character-transfer
+fix/auth-token-refresh-loop
 chore/ci-commitlint
 ```
 
@@ -38,22 +38,22 @@ optional footer: BREAKING CHANGE / refs
 
 | Scope | Area |
 |-------|------|
-| `auth`, `company`, `compliance`, `notification` | Domain modules |
-| `app`, `infrastructure`, `shared`, `db` | Technical layers |
+| `auth`, `voice_ai`, `inventory`, `lore` | Domain modules (`crates/domain`) |
+| `api`, `db`, `domain` | Technical layers (`crates/`) |
 | `ci`, `docs` | Supporting |
 
 ### Examples
 
 ```
-fix(auth): unify invalid-credentials responses
-feat(compliance): add job schedule/start/complete use-cases
-refactor(container): centralize module wiring
-ci: enforce conventional commits in PR titles
+fix(auth): handle expired Bungie refresh tokens gracefully
+feat(inventory): add cross-character vault transfer saga
+refactor(voice_ai): simplify intent JSON schema
+docs(adr): log decision 015 for RAG lore architecture
 ```
 
 ## Merge Strategy
 
-**Squash and merge** - PR title becomes the commit on main.
+**Squash and merge** — PR title becomes the commit on main.
 
 | Rule | Scope |
 |------|-------|
@@ -70,8 +70,8 @@ When working with an agent:
 
 ## What Makes a Good Commit
 
-1. **Atomic** - One logical change
-2. **Buildable** - Tests/lint pass
-3. **Explains intent** - What and why
-4. **Easy to revert** - No bundled unrelated changes
-5. **Correct scope/type** - Helps grep and changelogs
+1. **Atomic** — One logical change
+2. **Buildable** — Tests/lint pass
+3. **Explains intent** — What and why
+4. **Easy to revert** — No bundled unrelated changes
+5. **Correct scope/type** — Helps grep and changelogs

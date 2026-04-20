@@ -1,7 +1,7 @@
-# Plumber Compliance Dashboard (PCD)
+# Destiny AI Ghost Companion
 
 > **Documentation Status:** Active (PDA-SDD Aligned)
-> **Phase:** Pilot (LL152)
+> **Phase:** 4 — Infrastructure
 
 ## Documentation Structure (PDA-SDD)
 
@@ -17,19 +17,23 @@ Specification and Requirements.
 ### 2-During-Implementation
 Design and Change Logs.
 - **[DDD (Detailed Design Document)](./2-during-implementation/DDD/README.md)**
-  - Architecture, Data Design, API Specs, Module Design
+  - Architecture, Data Design, Module Design (Auth, VoiceAI, Inventory, Lore)
 - **[CLD (Change Log Document)](./2-during-implementation/CLD/README.md)**
   - Changelogs per Main Function
 
 ### 3-After-Implementation
 User Manuals and Post-Mortems.
 - **[SUMD (Software User Manual Document)](./3-after-implementation/SUMD/README.md)**
-  - Deployment, Getting Started (Moved here)
+  - Deployment, Getting Started
 
 ---
 
-## Active Documents
-- **[PRD: LL152 Pilot](./PRD_LL152_PILOT.md)** - The primary product definition.
+## Project Navigation
 
-## Archive
-- **[Legacy v0 Documentation](./archive/legacy_v0/)** - Old architecture, roadmaps, and API specs (superseded).
+| Document | Purpose |
+|----------|---------|
+| **[Roadmap](./roadmap/DESTINY_GHOST_ROADMAP.md)** | Phase tracking board |
+| **[ADRs](./adr/)** | Architecture Decision Records (016 logged) |
+| **[Journal](./journal/2026-04-20.md)** | Daily development logs |
+| **[Development](./development/COMMITS.md)** | Commit conventions and testing strategy |
+| **[PRD Extraction Notes](./1-pre-implementation/PRD_EXTRACTION_NOTES.md)** | Product requirements |

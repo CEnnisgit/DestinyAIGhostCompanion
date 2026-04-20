@@ -1,8 +1,8 @@
-# PCD Test Strategy
+# Destiny Ghost Test Strategy
 
-> **Version:** 1.0.0
-> **Last Updated:** 2026-04-02
-> **Status:** Active — updated as each Phase 3 milestone adds new testing layers
+> **Version:** 2.0.0
+> **Last Updated:** 2026-04-20
+> **Status:** Active — updated as each Phase milestone adds new testing layers
 
 ---
 
@@ -10,65 +10,58 @@
 
 **Each test proves that one layer fulfills its contract. Nothing more.**
 
-A domain test proves domain logic works. A DB test proves SQL is correct. An API test proves the HTTP interface is correct. When you catch yourself writing a test that crosses two layers, you're doing the adjacent layer's job — stop.
+A domain test proves domain logic works. A DB test proves SQLite queries are correct. An API test proves the HTTP interface is correct. When you catch yourself writing a test that crosses two layers, you're doing the adjacent layer's job — stop.
 
 ---
 
 ## Part 1: What Each Layer's Tests Prove
 
-### `pcd-domain` — "Does my business logic work?"
+### `crates/domain` — "Does my business logic work?"
 
 **Test type:** Unit tests. Pure functions, no I/O, no database, no HTTP.
 
 **What to test:**
-- Factory methods produce correct state (`User::new()` → active, has UUID)
-- Invariants reject bad input (`Email::new("")` → Err)
-- Commands transition state correctly (`job.start()` → InProgress)
-- State machines enforce valid transitions (`canceled → start` → Err)
-- Value objects normalize input (`Email` lowercases, `DisplayName` trims)
+- Saga orchestration produces correct state (`EquipItemSaga` transitions through steps)
+- Port trait contracts are fulfilled by mock implementations
+- Intent parsing handles all `VoiceIntent` variants correctly
+- Error yielding returns contextual messages (ADR 011), not panics
 
 **What NOT to test:**
-- ❌ Serialization (that's Serde's job, not yours)
-- ❌ That `Uuid::new_v4()` generates unique IDs (that's the UUID crate's job)
-- ❌ That `chrono::Utc::now()` returns the current time
+- ❌ Serialization (that's Serde's job)
+- ❌ That `Uuid::new_v4()` generates unique IDs
+- ❌ That `async_trait` dispatches correctly
 
 ---
 
-### `pcd-db` — "Does my SQL work?"
+### `crates/db` — "Does my SQLite work?"
 
-**Test type:** Integration tests. Require a real Postgres database.
+**Test type:** Integration tests. Require a real SQLite database.
 
 **What to test:**
-- `save()` → `find_by_id()` round-trips correctly (data survives persistence)
-- Column mapping is correct (`UserRow` fields match the actual table columns)
-- Query filters work (`find_by_email` returns the right user, not some other user)
-- DB constraints enforce invariants (`UNIQUE email` rejects duplicates)
+- Token `save()` → `find_by_membership()` round-trips correctly
+- Manifest item lookup returns the correct `DestinyItemHash` for a fuzzy query
+- Lore RAG retrieval returns semantically relevant passages
 - NULL handling is correct (optional fields save as NULL, come back as `None`)
 
 **What NOT to test:**
-- ❌ Domain validation (that's pcd-domain's job — the DB test assumes it received a valid domain object)
-- ❌ That SQLx works (SQLx is a well-tested library)
+- ❌ Domain validation (that's `crates/domain`'s job — the DB test assumes it received a valid domain object)
+- ❌ That `sqlx` works (SQLx is a well-tested library)
 - ❌ Every possible query combination (focus on the ones your app actually calls)
-
-**Why this matters for PCD specifically:**
-
-SQL is hand-written strings. There's no compile-time verification that `$4` maps to the right column. If you accidentally swap `.bind(user.is_active)` and `.bind(user.personal_workspace_id)`, the compiler won't catch it. The only thing that catches it is a DB test that writes a user and reads it back.
 
 ---
 
-### `pcd-api` — "Does the HTTP interface work?"
+### `crates/api` — "Does the HTTP interface work?"
 
 **Test type:** Handler tests (in-process, no real HTTP server) OR lightweight integration.
 
 **What to test:**
 - Routes exist and match expected HTTP methods
-- Request deserialization: does JSON → struct work correctly?
-- Response serialization: does struct → JSON include all fields?
-- Status codes: 200 for success, 404 for not found, 400 for bad input, 422 for domain errors
-- Error messages: does the user see a useful message or a stack trace?
+- Bungie OAuth callback correctly exchanges authorization codes
+- WebSocket voice command pipeline correctly parses and dispatches intents
+- Status codes: 200 for success, 401 for expired tokens, 400 for bad input
 
 **What NOT to test:**
-- ❌ Domain logic (if you're testing that `deactivate()` fails on an already-deactivated user inside an API test, you're duplicating a domain test)
+- ❌ Domain logic (if the domain already tests `EquipItemSaga`, don't re-test it through the API)
 - ❌ SQL correctness (that's the DB layer's job)
 - ❌ That Axum routes requests to handlers (that's Axum's job)
 
@@ -76,18 +69,18 @@ SQL is hand-written strings. There's no compile-time verification that `$4` maps
 
 ## Part 2: End-to-End Tests
 
-Exercises the full stack: HTTP → API → domain → DB → response.
+Exercises the full stack: WebSocket → API → Domain → DB → Bungie → response.
 
 **When valuable:**
-- Multi-step workflows where order matters (LL152 lifecycle)
-- Cross-entity operations (create job → auto-create LL152 extension)
+- Multi-step workflows where order matters (equip cross-character item)
+- Cross-module operations (voice command → intent parse → inventory action)
 - Scenarios where composition root wiring matters
 
 **When NOT valuable:**
 - Simple CRUD (if `save()` and `find_by_id()` work individually, they work together)
 - Validating individual fields (that's a unit test)
 
-**PCD needs 2-3 E2E tests total**, covering LL152 lifecycle and credential attachment.
+**Destiny Ghost needs 2-3 E2E tests total**, covering equip lifecycle and lore retrieval.
 
 ---
 
@@ -98,31 +91,31 @@ Exercises the full stack: HTTP → API → domain → DB → response.
 | `From<Row>` impls in isolation | Tested implicitly by save+find roundtrip |
 | `#[derive(Serialize)]` output | Serde is well-tested. If the derive compiles, it works |
 | That `Router::new().route(...)` registers a route | That's Axum's job |
-| That `PgPool` connects to a database | That's SQLx's job |
-| Individual SQL clauses | Test the full repo method, not fragments |
-| "What if Postgres is down?" | `anyhow::Error` handles this already |
+| That `SqlitePool` connects to a database | That's SQLx's job |
+| Individual SQL clauses | Test the full adapter method, not fragments |
+| "What if SQLite is corrupted?" | `anyhow::Error` handles this already |
 
 ---
 
 ## Part 4: Implementation Phasing
 
-Tests are implemented alongside their relevant Phase 3 milestone:
+Tests are implemented alongside their relevant Phase milestone:
 
 | Phase | Tests Added | Why Now |
 |-------|-------------|---------|
-| **3A (Identity Foundation)** | DB repo tests (~20) | Hand-written SQL needs verification before anything is built on top |
-| **3B (Authentication)** | API handler tests (~9) | Auth changes every handler — test after they stabilize |
-| **3C (Authorization)** | E2E workflow tests (~3) | Full stack is complete — test real user flows |
+| **Phase 3 (Domain)** | Domain unit tests (baseline) | Pure logic must be proven before infrastructure |
+| **Phase 4 (Infrastructure)** | DB + API tests (~18) | SQLite queries and Bungie HTTP calls need verification |
+| **Phase 5 (Presentation)** | E2E workflow tests (~3) | Full stack is complete — test real user flows |
 
 ---
 
 ## Part 5: Anti-Patterns to Avoid
 
 1. **"Test everything through the API"** — Tests everything, proves nothing specific. When it fails, you don't know which layer broke.
-2. **"Mock the database"** — For API tests, fine. For DB tests, never. The whole point is to verify SQL against real Postgres.
-3. **"Re-test domain logic in API tests"** — The domain already tests `CompanyError::EmptyName`. API test should only verify the status code is 400.
+2. **"Mock the database"** — For API tests, fine. For DB tests, never. The whole point is to verify SQL against real SQLite.
+3. **"Re-test domain logic in API tests"** — The domain already tests saga error handling. API test should only verify the status code is 400.
 4. **"Test every field in the response"** — Assert the shape, not every field. If the derive compiles, Serde serializes correctly.
-5. **"Write tests before you have infrastructure"** — `#[sqlx::test]` gives per-test databases for free. Don't over-engineer.
+5. **"Write tests before you have infrastructure"** — Get the adapters wired first, then prove they work.
 
 ---
 
@@ -130,14 +123,15 @@ Tests are implemented alongside their relevant Phase 3 milestone:
 
 | Concern | Solution |
 |---------|----------|
-| **Test database** | `#[sqlx::test]` — auto-creates ephemeral Postgres DB per test |
-| **Test fixtures** | Shared `fixtures.rs` with FK chain setup (workspace → company → user → membership) |
-| **HTTP test client** | Axum's `TestClient` for handler tests (Phase 3B) |
-| **CI** | `cargo test -p pcd-db` with Postgres service container |
+| **Test database** | In-memory SQLite (`:memory:`) for fast ephemeral test DBs |
+| **Bungie API mocks** | Mock `BungieInventoryPort` trait with known responses |
+| **HTTP test client** | Axum's `TestClient` for handler tests (Phase 4) |
+| **CI** | `cargo test --workspace` with no external dependencies required |
 
 ---
 
 ## References
 
-- [ADR-0036](../adr/0036-singular-module-names.md) — Naming conventions
-- [TESTING_MATRIX.md](./TESTING_MATRIX.md) — Per-entity coverage tracking
+- [ADR-0010](../adr/0010-strict-serial-inventory-mutations.md) — Serial mutation testing
+- [ADR-0011](../adr/0011-inventory-saga-state-rollbacks.md) — Error yielding verification
+- [TESTING_MATRIX.md](./TESTING_MATRIX.md) — Per-module coverage tracking
