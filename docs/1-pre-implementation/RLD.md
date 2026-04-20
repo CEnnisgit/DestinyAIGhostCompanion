@@ -2,6 +2,7 @@
 
 > **Phase:** Pre-Implementation
 > **Status:** Essential
+> **Project:** Destiny AI Ghost Companion
 
 ---
 
@@ -10,37 +11,35 @@
 ### 1.1. Summary
 | Job Title | Sum |
 |-----------|-----|
-| AI Engineer (Agent) | 1 |
-| Senior Software Engineer (User) | 1 |
+| AI Agent | 1 |
+| Primary Developer | 1 |
 
 ### 1.2. Details
 | Name | Job Title | Experience | Qualification | Hourly Cost |
 |------|-----------|------------|---------------|-------------|
 | Antigravity | AI Agent | N/A | Google Deepmind | N/A |
-| User | Senior Dev | Expert | Full Stack | N/A |
+| User | Developer | Expert | Full Stack / Systems | N/A |
 
 ---
 
-## 2. Equipments
+## 2. Equipment
 
 ### 2.1. Hardware
 | Category | Item | Quantity/Description |
 |----------|------|----------------------|
-| **Computers** | Development Machine | 1 (Windows ID: 596) |
-| **Servers** | Cloud Run | Production Environment |
-| **Storage** | Cloud SQL | PostgreSQL Database |
+| **Computers** | Windows Workstation | 1 (Primary Development Machine) |
+| **Mobile Devices** | User iPhone | 1 (iOS App Target) |
 
 ### 2.2. Software
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Dev Environment** | VS Code | Primary IDE |
+| **Dev Environment** | VS Code / Xcode | Primary IDEs |
 | **Version Control** | Git | GitHub |
-| **DBMS** | PostgreSQL | Raw SQLx (no ORM) |
-| **OS** | Windows | Host OS |
-| **Design Tools** | Mermaid | Diagrams |
-| **Testing Tools** | Vitest | Unit/Integration Tests |
-| **Deployment** | GitHub Actions | CI/CD |
-| **Project Mgmt** | GitHub Projects | Task Tracking |
-| **Communication** | Chat Interface | User-Agent Interaction |
-| **Documentation** | PDA-SDD | Framework |
-| **Virtual Machines** | Docker | Containerization |
+| **Backend Environment** | Python 3 | Runtime |
+| **Backend Framework** | FastAPI | Core REST API |
+| **Frontend Framework** | React (Node.js) | Web SPA |
+| **Mobile Framework** | SwiftUI | iOS Native Client |
+| **AI Inference** | Ollama | Local LLM Engine (LLaMA/Phi) |
+| **Testing Tools** | Pytest | Python test suite |
+| **Deployment Tools** | PyInstaller | Desktop Executable Bundling |
+| **External APIs** | Bungie.net API | Destiny 2 OAuth & Inventory |
