@@ -1,12 +1,11 @@
-# SGI-OJ: Objectives
+# General Information: Objectives (SGI-OJ)
 
-> **Code:** `SGI-OJ`
-> **Category:** General Info
+## 1. Primary Objectives
+1. **Reduce Friction**: Eliminate the need to use a second screen, a smartphone, or pause gameplay to swap gear during intense encounters.
+2. **Increase Immersion**: Maintain the in-universe illusion by allowing players to converse with their "Ghost" directly using natural language.
+3. **Ensure Zero-Cost Scalability**: By designing the LLM inference architecture around local models (Ollama), the product ensures zero continuous API costs for the end-user while maximizing privacy.
 
-## Project Objectives
-
-1. **Replace Manual Workflow:** Eliminate paper forms, text-based dispatch, and spreadsheet tracking.
-2. **Ensure 100% Data Capture:** Structured GPS1 form with validation prevents missed fields.
-3. **Track Compliance Deadlines:** Auto-calculate 30/60/120/180-day deadlines and alert users.
-4. **Reduce Handoff Errors:** Plumber → LMP submission must be complete and reviewable.
-5. **Generate Compliant Reports:** Produce GPS1/GPS2-ready PDF packets without retyping.
+## 2. Success Metrics
+- End-to-end voice intent execution (Speech → STT → Intent → API → Equip) completes reliably.
+- Accurate identification of "fuzzy" item names (e.g. "Equip sunshot" resolving faithfully to "Sunshot" hand cannon).
+- Seamless error handling in the case of Bungie.net downtime, ensuring the application fails gracefully without crashing.
