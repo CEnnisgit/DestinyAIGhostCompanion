@@ -1,7 +1,7 @@
 # ADR 004: Dual Authentication and Security Primitives
 
 ## Status
-Accepted
+Superseded by ADR 005
 
 ## Context
 The application must authenticate two separate entities:
