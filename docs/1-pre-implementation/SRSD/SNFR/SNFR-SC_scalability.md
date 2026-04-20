@@ -1,30 +1,6 @@
-# SNFR-SC: Scalability Requirements
+# Non-Functional Requirements: Scalability (SNFR-SC)
 
-> **Parent:** [SNFR Index](../README.md) | **Prev:** [SNFR-S](./SNFR-S_security.md) | **Next:** [SNFR-M](./SNFR-M_maintainability.md)
-
-## Sub-Types
-- [SNFR-SC: Scalability Requirements](#snfr-sc-scalability-requirements)
-  - [Sub-Types](#sub-types)
-  - [SNFR-SCS: Scale Targets](#snfr-scs-scale-targets)
-    - [Growth Targets](#growth-targets)
-  - [SNFR-SCI: Infrastructure](#snfr-sci-infrastructure)
-
----
-
-## SNFR-SCS: Scale Targets
-
-### Growth Targets
-
-| Code | Description | Target | PRD Ref |
-|------|-------------|--------|---------|
-| `SNFR-SCS-01` | **Post-Pilot (3 companies):** | 50 users, 50 jobs/day | §7.3 |
-| `SNFR-SCS-02` | **Future Growth:** | 200 users, 200 jobs/day | Roadmap |
-
----
-
-## SNFR-SCI: Infrastructure
-
-| Code | Description |
-|------|-------------|
-| `SNFR-SCI-10` | **Cloud Run Auto-Scaling:** Min 1, Max 10 instances for pilot. |
-| `SNFR-SCI-11` | **Database Connection Pooling:** PostgreSQL connection pool sized for concurrent load. |
+## Hardware Footprint (SNFR-SCH)
+- **`SNFR-SCH-01`**: The local Python API and React Web servers must operate smoothly on consumer hardware alongside Destiny 2 without aggressively stealing CPU cycles from the game.
+- **`SNFR-SCH-02`**: Ollama integration must attempt to bind to the most optimized runtime (e.g., Metal, CUDA) available on the host machine to minimize VRAM starvation for the background video game. 
+- **`SNFR-SCH-03`**: As a strictly single-tenant application, horizontal user scaling is completely out of scope. Scaling implies supporting larger manifests and expanded persona datasets locally.
