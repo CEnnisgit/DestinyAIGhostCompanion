@@ -30,3 +30,12 @@ data/*.db-journal
 
 # Rust build artifacts
 /target/
+
+# Security — never commit secrets
+.env*
+*.pem
+*.key
+
+# BFG cleanup
+bfg.jar
+*.bfg-report/
