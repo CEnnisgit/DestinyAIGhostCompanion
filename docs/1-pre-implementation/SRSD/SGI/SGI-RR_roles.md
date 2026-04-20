@@ -1,19 +1,13 @@
-# SGI-RR: Roles & Responsibilities
+# General Information: Roles and Rights (SGI-RR)
 
-> **Code:** `SGI-RR`
-> **Category:** General Info
+## 1. Local Player (User)
+The individual executing the Ghost Companion application locally on their machine.
+- Has full access to the localized chat interface.
+- Holds exactly one authenticated Bungie OAuth token.
+- Has no administrative rights over the systemic rules of the Bungie.net API.
 
-## Project Roles
+## 2. Target Character (Guardian)
+The specific active class avatar inside of the video game receiving the inventory actions based on the API request.
 
-| Role | Person | Responsibilities |
-|------|--------|------------------|
-| **Product Owner** | User (Marcus) | Defines requirements, approves features, signs off releases |
-| **Developer** | Antigravity (AI) | Implements features, maintains docs, runs tests |
-| **Domain Expert** | Father (LMP) | Validates workflows, provides LL152 expertise, pilots the system |
-
-## System Roles (Actors)
-
-| Actor | Description | Primary Actions |
-|-------|-------------|-----------------|
-| **Plumber (Technician)** | Field user on mobile | View jobs, capture GPS1 data, attach photos, submit |
-| **LMP (Company Admin)** | Office user on dashboard | Create jobs, dispatch, review, generate reports |
+## 3. Administrator
+This role does not exist mechanically in the deployed execution of the assistant. It is a strictly single-tenant execution structure where the runner is the sole owner.

@@ -1,17 +1,7 @@
-# SGI-MF: Main Functions
+# General Information: Main Functions (SGI-MF)
 
-> **Code:** `SGI-MF`
-> **Category:** General Info
-
-## Core System Functions
-
-| Function | Description | Lane |
-|----------|-------------|------|
-| **Job Intake** | LMP creates new LL152 job with address and access details | B |
-| **Dispatch** | LMP assigns technician and schedules job | B |
-| **Field Capture** | Plumber completes GPS1-structured form on mobile | A |
-| **Photo Evidence** | Plumber attaches photos to inspection | A |
-| **Submission** | Plumber submits findings to LMP for review | A |
-| **Review** | LMP reviews submission, approves or returns | B |
-| **Report Generation** | System generates GPS1/GPS2 PDF packet | B |
-| **Deadline Tracking** | System calculates and alerts on compliance deadlines | B |
+1. **Audio Intent Parsing**: Capturing hotword or active mic streams and translating speech down to categorized execution intents.
+2. **Item Equipping Flow**: Evaluating item location, conducting cross-character transitive transfers, and equipping items onto the active character.
+3. **Item Vaulting Flow**: Ensuring items are safely transferred back into the global vault space to free up active inventory slots.
+4. **Lore Generation**: Accessing Destiny 2 specific text corpuses to form conversational strings and emulate dynamic personalities.
+5. **Session Authentication**: Negotiating OAuth2 tokens with the Bungie.net API and refreshing standard bearer tokens securely.
