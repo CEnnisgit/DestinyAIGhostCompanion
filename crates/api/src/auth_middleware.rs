@@ -61,6 +61,45 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
+// ── WebSocket Auth Extractor ────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct WsToken {
+    pub token: String,
+}
+
+/// Extractor for WebSockets where browsers cannot send Authorization headers.
+/// Looks for `?token=...` in the query string.
+pub struct AuthUserWs {
+    pub membership_id: BungieMembershipId,
+}
+
+impl FromRequestParts<AppState> for AuthUserWs {
+    type Rejection = (StatusCode, axum::Json<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        // Extract query parameters manually
+        let query = parts.uri.query().unwrap_or("");
+        let ws_token: WsToken = serde_urlencoded::from_str(query)
+            .map_err(|_| unauthorized("missing token query parameter"))?;
+
+        let key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
+        let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.set_required_spec_claims(&["sub", "exp"]);
+
+        let token_data = decode::<Claims>(&ws_token.token, &key, &validation)
+            .map_err(|e| unauthorized(&format!("invalid token: {e}")))?;
+
+        let membership_id = BungieMembershipId::new(token_data.claims.sub)
+            .map_err(|e| unauthorized(&format!("invalid membership id in token: {e}")))?;
+
+        Ok(Self { membership_id })
+    }
+}
+
 // ── JWT minting ─────────────────────────────────────────────────────────────
 
 /// Create a signed JWT with `sub` = membership id and a 1-hour expiry.

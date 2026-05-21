@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::auth::membership::BungieMembershipId;
-use super::item::{DestinyItemHash, ItemLocation};
+use super::item::ItemLocation;
 use super::ports::{BungieInventoryPort, ManifestDatabasePort};
 
 /// The physics engine for Inventory transactions. Enforces strict linear awaiting (ADR 010)
@@ -50,25 +50,25 @@ impl EquipItemSaga {
             }
             
             ItemLocation::InventoryOnCharacter(ref current_character) if current_character == target_character_id => {
-                if let Err(_) = self.inventory_port.equip_item(membership_id, hash, target_character_id).await {
+                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
                     return Err(format!("Failed to equip '{}'. Your slot might be locked.", item_name));
                 }
             }
             
             ItemLocation::Vault => {
-                if let Err(_) = self.inventory_port.transfer_item(membership_id, hash, false, target_character_id).await {
+                if self.inventory_port.transfer_item(membership_id, hash, false, target_character_id).await.is_err() {
                     return Err(format!("Failed to pull '{}' from the vault. Your inventory is full.", item_name));
                 }
-                if let Err(_) = self.inventory_port.equip_item(membership_id, hash, target_character_id).await {
+                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
                     return Err(format!("Pulled '{}' from vault, but failed to equip it.", item_name));
                 }
             }
             
             ItemLocation::Postmaster => {
-                if let Err(_) = self.inventory_port.pull_postmaster(membership_id, hash, target_character_id).await {
+                if self.inventory_port.pull_postmaster(membership_id, hash, target_character_id).await.is_err() {
                     return Err(format!("Could not rescue '{}' from postmaster. Ensure you have space.", item_name));
                 }
-                if let Err(_) = self.inventory_port.equip_item(membership_id, hash, target_character_id).await {
+                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
                     return Err(format!("Rescued '{}', but failed to equip it.", item_name));
                 }
             }
@@ -76,13 +76,13 @@ impl EquipItemSaga {
             ItemLocation::EquippedOnCharacter(ref current_character) 
             | ItemLocation::InventoryOnCharacter(ref current_character) => {
                 // Cross-Character Transfer Logic: Current Character -> Vault -> Target Character
-                if let Err(_) = self.inventory_port.transfer_item(membership_id, hash, true, current_character).await {
+                if self.inventory_port.transfer_item(membership_id, hash, true, current_character).await.is_err() {
                     return Err(format!("Could not vault '{}' from your other character.", item_name));
                 }
-                if let Err(_) = self.inventory_port.transfer_item(membership_id, hash, false, target_character_id).await {
+                if self.inventory_port.transfer_item(membership_id, hash, false, target_character_id).await.is_err() {
                     return Err(format!("Added '{}' to Vault, but could not transfer to your target character.", item_name));
                 }
-                if let Err(_) = self.inventory_port.equip_item(membership_id, hash, target_character_id).await {
+                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
                     return Err(format!("Successfully moved '{}' across characters, but failed to equip it.", item_name));
                 }
             }
