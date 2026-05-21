@@ -10,11 +10,14 @@ use api::bungie_identity_client::BungieIdentityClient;
 use api::bungie_oauth_routes::{auth_login, auth_callback, auth_refresh, auth_me};
 use api::openai_client::OpenAiClient;
 use api::websocket_handler::websocket_handler;
+use api::bungie_inventory_client::BungieInventoryClient;
 use db::crypto;
 use db::postgres_token_storage::PostgresTokenStorageAdapter;
+use db::manifest_item_resolver::ManifestItemResolver;
 use domain::auth::saga::OAuthSessionSaga;
 use domain::voice_ai::personalities::GhostPersonality;
 use domain::voice_ai::saga::VoiceCommandSaga;
+use domain::inventory::saga::EquipItemSaga;
 
 #[tokio::main]
 async fn main() {
@@ -85,10 +88,24 @@ async fn main() {
         GhostPersonality::Warlock, // Configurable later
     ));
 
+    let inventory_client = Arc::new(BungieInventoryClient::new(
+        http_client.clone(),
+        config.bungie_api_key.clone(),
+        token_storage.clone(),
+    ));
+
+    let manifest_resolver = Arc::new(ManifestItemResolver::new(pool.clone()));
+
+    let equip_saga = Arc::new(EquipItemSaga::new(
+        inventory_client,
+        manifest_resolver,
+    ));
+
     // 7. Build application state
     let state = AppState {
         auth_saga,
         voice_saga,
+        equip_saga,
         token_storage,
         http_client,
         config: Arc::new(config),
