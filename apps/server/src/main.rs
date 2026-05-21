@@ -2,16 +2,19 @@ use std::sync::Arc;
 
 use axum::{routing::{get, post}, Router};
 use tower_http::cors::{CorsLayer, Any};
-use tracing_subscriber;
-use dotenvy;
+
 
 use api::app_state::AppState;
 use api::config::AppConfig;
 use api::bungie_identity_client::BungieIdentityClient;
 use api::bungie_oauth_routes::{auth_login, auth_callback, auth_refresh, auth_me};
+use api::openai_client::OpenAiClient;
+use api::websocket_handler::websocket_handler;
 use db::crypto;
 use db::postgres_token_storage::PostgresTokenStorageAdapter;
 use domain::auth::saga::OAuthSessionSaga;
+use domain::voice_ai::personalities::GhostPersonality;
+use domain::voice_ai::saga::VoiceCommandSaga;
 
 #[tokio::main]
 async fn main() {
@@ -59,9 +62,33 @@ async fn main() {
         identity_client,
     ));
 
+    // Construct Universal LLM Adapters
+    let primary_llm = Arc::new(OpenAiClient::new(
+        http_client.clone(),
+        config.llm_base_url.clone(),
+        config.llm_api_key.clone(),
+        config.llm_model.clone(),
+    ));
+
+    let fallback_llm = config.fallback_llm_base_url.as_ref().map(|base_url| {
+        Arc::new(OpenAiClient::new(
+            http_client.clone(),
+            base_url.clone(),
+            config.fallback_llm_api_key.clone().unwrap_or_default(),
+            config.fallback_llm_model.clone().unwrap_or_default(),
+        )) as Arc<dyn domain::voice_ai::ports::GenerativeAiPort>
+    });
+
+    let voice_saga = Arc::new(VoiceCommandSaga::new(
+        primary_llm,
+        fallback_llm,
+        GhostPersonality::Warlock, // Configurable later
+    ));
+
     // 7. Build application state
     let state = AppState {
         auth_saga,
+        voice_saga,
         token_storage,
         http_client,
         config: Arc::new(config),
@@ -74,6 +101,7 @@ async fn main() {
         .route("/auth/callback", get(auth_callback))
         .route("/auth/refresh", post(auth_refresh))
         .route("/auth/me", get(auth_me))
+        .route("/ws/voice", get(websocket_handler))
         .layer(CorsLayer::new().allow_origin(Any).allow_headers(Any).allow_methods(Any))
         .with_state(state);
 

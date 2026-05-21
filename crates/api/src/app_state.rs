@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use domain::auth::ports::TokenStoragePort;
 use domain::auth::saga::OAuthSessionSaga;
+use domain::voice_ai::saga::VoiceCommandSaga;
 
 use crate::config::AppConfig;
 
@@ -11,6 +12,7 @@ use crate::config::AppConfig;
 #[derive(Clone)]
 pub struct AppState {
     pub auth_saga: Arc<OAuthSessionSaga>,
+    pub voice_saga: Arc<VoiceCommandSaga>,
     pub token_storage: Arc<dyn TokenStoragePort>,
     pub http_client: reqwest::Client,
     pub config: Arc<AppConfig>,

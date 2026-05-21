@@ -8,6 +8,12 @@ pub struct AppConfig {
     pub bungie_client_secret: String,
     pub jwt_secret: String,
     pub encryption_key: String,
+    pub llm_base_url: String,
+    pub llm_api_key: String,
+    pub llm_model: String,
+    pub fallback_llm_base_url: Option<String>,
+    pub fallback_llm_api_key: Option<String>,
+    pub fallback_llm_model: Option<String>,
     pub port: u16,
 }
 
@@ -23,6 +29,12 @@ impl AppConfig {
             bungie_client_secret: required_var("BUNGIE_CLIENT_SECRET"),
             jwt_secret: required_var("JWT_SECRET"),
             encryption_key: required_var("ENCRYPTION_KEY"),
+            llm_base_url: required_var("LLM_BASE_URL"),
+            llm_api_key: required_var("LLM_API_KEY"),
+            llm_model: required_var("LLM_MODEL"),
+            fallback_llm_base_url: std::env::var("FALLBACK_LLM_BASE_URL").ok(),
+            fallback_llm_api_key: std::env::var("FALLBACK_LLM_API_KEY").ok(),
+            fallback_llm_model: std::env::var("FALLBACK_LLM_MODEL").ok(),
             port: std::env::var("PORT")
                 .ok()
                 .and_then(|v| v.parse().ok())
