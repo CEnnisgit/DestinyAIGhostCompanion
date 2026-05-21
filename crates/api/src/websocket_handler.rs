@@ -62,14 +62,18 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, auth: AuthUserWs)
             // 2. Route through Domain Saga (includes ADR 008 Automatic Failover)
             match state.voice_saga.process_voice_command(&user_text).await {
                 Ok(intent) => {
-                    // 3. (Future) Route the intent to the correct domain execution slice
-                    // For Phase 4C, we just echo a generic success response based on the intent
-                    // because Phase 4D (Inventory) and 4E (Lore) are not built yet.
+                    // For Phase 4D (Inventory), we wire up the Equip intent.
                     let response_text = match &intent {
-                        VoiceIntent::Equip { item_name, .. } => format!("I'll equip {} for you right away.", item_name),
-                        VoiceIntent::Transfer { item_name, to_vault: true } => format!("Sending {} to the vault.", item_name),
-                        VoiceIntent::Transfer { item_name, to_vault: false } => format!("Pulling {} from the vault.", item_name),
-                        VoiceIntent::PullPostmaster { .. } => "Checking the postmaster now.".to_string(),
+                        VoiceIntent::Equip { item_name, character_class } => {
+                            let char_str = character_class.as_deref().unwrap_or("primary");
+                            match state.equip_saga.process_equip(&auth.membership_id, item_name, char_str).await {
+                                Ok(msg) => msg,
+                                Err(msg) => msg,
+                            }
+                        },
+                        VoiceIntent::Transfer { item_name, to_vault: true } => format!("Sending {} to the vault. (Feature coming soon)", item_name),
+                        VoiceIntent::Transfer { item_name, to_vault: false } => format!("Pulling {} from the vault. (Feature coming soon)", item_name),
+                        VoiceIntent::PullPostmaster { .. } => "Checking the postmaster now. (Feature coming soon)".to_string(),
                         VoiceIntent::QueryInventory { slot, .. } => format!("Let me check your {} slot.", slot.as_deref().unwrap_or("inventory")),
                         VoiceIntent::Lore { topic } => format!("Let me consult the archives regarding {}.", topic),
                         VoiceIntent::Unknown { reason_for_confusion } => format!("I'm sorry, I didn't catch that: {}", reason_for_confusion),

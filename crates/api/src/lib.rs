@@ -5,3 +5,4 @@ pub mod bungie_oauth_routes;
 pub mod config;
 pub mod openai_client;
 pub mod websocket_handler;
+pub mod bungie_inventory_client;
