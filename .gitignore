@@ -33,6 +33,7 @@ data/*.db-journal
 
 # Security — never commit secrets
 .env*
+!.env.example
 *.pem
 *.key
 
