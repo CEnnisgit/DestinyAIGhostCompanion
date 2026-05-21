@@ -1,0 +1,21 @@
+[package]
+name = "ghost-server"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ghost-server"
+path = "src/main.rs"
+
+[dependencies]
+domain = { path = "../../crates/domain" }
+db = { path = "../../crates/db" }
+api = { path = "../../crates/api" }
+sqlx = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+axum = "0.8"
+reqwest = { version = "0.12", features = ["json"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+dotenvy = "0.15"
+tower-http = { version = "0.6", features = ["cors"] }
