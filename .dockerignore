@@ -1,0 +1,29 @@
+# Rust build artifacts
+target/
+
+# Git history
+.git/
+.gitignore
+
+# Legacy archived code
+archive/
+
+# Frontend dependencies
+apps/desktop/node_modules/
+
+# Documentation (not needed in container)
+docs/
+
+# Secrets — never bake into images
+.env
+.env.*
+!.env.example
+
+# IDE and agent config
+.cortex/
+.vscode/
+.idea/
+
+# Miscellaneous
+*.md
+bungie_api_reference.json
