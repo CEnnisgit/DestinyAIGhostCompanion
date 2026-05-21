@@ -6,3 +6,10 @@ edition = "2024"
 [dependencies]
 sqlx = { workspace = true }
 domain = { path = "../domain" }
+async-trait = "0.1"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+aes-gcm = "0.10"
+rand = "0.8"
+hkdf = "0.12"
+sha2 = "0.10"
