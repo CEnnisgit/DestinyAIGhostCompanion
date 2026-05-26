@@ -9,6 +9,9 @@ pub trait BungieInventoryPort: Send + Sync {
     /// Discovers where an item currently sits in the user's account
     async fn locate_item(&self, membership_id: &BungieMembershipId, hash: DestinyItemHash) -> Result<ItemLocation, anyhow::Error>;
     
+    /// Translates an NLP string (like "Warlock" or "primary") to the user's 64-bit character ID
+    async fn resolve_character_id(&self, membership_id: &BungieMembershipId, character_class: &str) -> Result<String, anyhow::Error>;
+    
     /// Physically moves an item (e.g. Vault -> Character)
     async fn transfer_item(&self, membership_id: &BungieMembershipId, hash: DestinyItemHash, to_vault: bool, character_id: &str) -> Result<(), anyhow::Error>;
     
