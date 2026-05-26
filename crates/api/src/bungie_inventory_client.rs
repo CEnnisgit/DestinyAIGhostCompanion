@@ -58,8 +58,8 @@ impl BungieInventoryClient {
         hash: DestinyItemHash,
         access_token: &str
     ) -> Result<(ItemLocation, String), anyhow::Error> {
-        // 3 is all Destiny memberships
-        let url = format!("https://www.bungie.net/Platform/Destiny2/3/Profile/{}/?components=102,201,205,300", membership_id.0);
+        // 254 is 'All' for Cross Save accounts
+        let url = format!("https://www.bungie.net/Platform/Destiny2/254/Profile/{}/?components=102,201,205,300", membership_id.0);
         let res = self.http_client.get(&url)
             .header("X-API-Key", &self.api_key)
             .header("Authorization", format!("Bearer {}", access_token))
@@ -127,6 +127,59 @@ impl BungieInventoryPort for BungieInventoryClient {
         let (location, _) = self.locate_and_resolve_instance(membership_id, hash, &access_token).await?;
         Ok(location)
     }
+
+    async fn resolve_character_id(&self, membership_id: &BungieMembershipId, character_class: &str) -> Result<String, anyhow::Error> {
+        let access_token = self.get_access_token(membership_id).await?;
+        
+        let url = format!("https://www.bungie.net/Platform/Destiny2/254/Profile/{}/?components=200", membership_id.0);
+        let res = self.http_client.get(&url)
+            .header("X-API-Key", &self.api_key)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .send()
+            .await?;
+
+        let status = res.status();
+        let text = res.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(anyhow::anyhow!("Bungie Profile Error: {} - {}", status, text));
+        }
+
+        let json: Value = serde_json::from_str(&text)?;
+        let characters = json["Response"]["characters"]["data"].as_object()
+            .ok_or_else(|| anyhow::anyhow!("No characters found on account"))?;
+
+        // If 'primary' or unspecific, find the one with the most recent dateLastPlayed
+        if character_class.eq_ignore_ascii_case("primary") {
+            let mut most_recent_id = String::new();
+            let mut most_recent_date = String::new();
+
+            for (id, data) in characters {
+                if let Some(date) = data["dateLastPlayed"].as_str() && date > most_recent_date.as_str() {
+                    most_recent_date = date.to_string();
+                    most_recent_id = id.clone();
+                }
+            }
+            if !most_recent_id.is_empty() {
+                return Ok(most_recent_id);
+            }
+        } else {
+            // Map english class word to DestinyClass enum: 0=Titan, 1=Hunter, 2=Warlock
+            let target_class_type = match character_class.to_lowercase().as_str() {
+                "titan" => 0,
+                "hunter" => 1,
+                "warlock" => 2,
+                _ => return Err(anyhow::anyhow!("Unknown character class: {}", character_class)),
+            };
+
+            for (id, data) in characters {
+                if data["classType"].as_i64() == Some(target_class_type) {
+                    return Ok(id.clone());
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("Could not find a character matching '{}'", character_class))
+    }
     
     async fn transfer_item(&self, membership_id: &BungieMembershipId, hash: DestinyItemHash, to_vault: bool, character_id: &str) -> Result<(), anyhow::Error> {
         let access_token = self.get_access_token(membership_id).await?;
@@ -138,7 +191,7 @@ impl BungieInventoryPort for BungieInventoryClient {
             "transferToVault": to_vault,
             "itemId": instance_id,
             "characterId": character_id,
-            "membershipType": 3
+            "membershipType": 254
         });
         
         self.post_action(&access_token, "TransferItem", body).await
@@ -151,7 +204,7 @@ impl BungieInventoryPort for BungieInventoryClient {
         let body = serde_json::json!({
             "itemId": instance_id,
             "characterId": character_id,
-            "membershipType": 3
+            "membershipType": 254
         });
         
         self.post_action(&access_token, "EquipItem", body).await
@@ -166,7 +219,7 @@ impl BungieInventoryPort for BungieInventoryClient {
             "stackSize": 1,
             "itemId": instance_id,
             "characterId": character_id,
-            "membershipType": 3
+            "membershipType": 254
         });
         
         self.post_action(&access_token, "PullFromPostmaster", body).await

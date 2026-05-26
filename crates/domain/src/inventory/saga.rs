@@ -37,52 +37,63 @@ impl EquipItemSaga {
             Err(_) => return Err(format!("I could not find a record for '{}' in the database.", item_name)),
         };
 
-        // 2. Locate the Item physically
+        // 2. Resolve the English Class String to a physical 64-bit ID
+        let resolved_character_id = match self.inventory_port.resolve_character_id(membership_id, target_character_id).await {
+            Ok(id) => id,
+            Err(_) => return Err(format!("I couldn't find a {} character on your account.", target_character_id)),
+        };
+
+        // 3. Locate the Item physically
         let location = match self.inventory_port.locate_item(membership_id, hash).await {
             Ok(loc) => loc,
             Err(_) => return Err(format!("I couldn't find '{}' anywhere on your account.", item_name)),
         };
 
-        // 3. Serial Physics Execution
+        // 4. Serial Physics Execution
         match location {
-            ItemLocation::EquippedOnCharacter(ref current_character) if current_character == target_character_id => {
+            ItemLocation::EquippedOnCharacter(ref current_character) if current_character == &resolved_character_id => {
                 return Ok(format!("'{}' is already equipped.", item_name));
             }
             
-            ItemLocation::InventoryOnCharacter(ref current_character) if current_character == target_character_id => {
-                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
+            ItemLocation::InventoryOnCharacter(ref current_character) if current_character == &resolved_character_id => {
+                if self.inventory_port.equip_item(membership_id, hash, &resolved_character_id).await.is_err() {
                     return Err(format!("Failed to equip '{}'. Your slot might be locked.", item_name));
                 }
             }
             
             ItemLocation::Vault => {
-                if self.inventory_port.transfer_item(membership_id, hash, false, target_character_id).await.is_err() {
+                if self.inventory_port.transfer_item(membership_id, hash, false, &resolved_character_id).await.is_err() {
                     return Err(format!("Failed to pull '{}' from the vault. Your inventory is full.", item_name));
                 }
-                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
+                if self.inventory_port.equip_item(membership_id, hash, &resolved_character_id).await.is_err() {
                     return Err(format!("Pulled '{}' from vault, but failed to equip it.", item_name));
                 }
             }
             
             ItemLocation::Postmaster => {
-                if self.inventory_port.pull_postmaster(membership_id, hash, target_character_id).await.is_err() {
+                if self.inventory_port.pull_postmaster(membership_id, hash, &resolved_character_id).await.is_err() {
                     return Err(format!("Could not rescue '{}' from postmaster. Ensure you have space.", item_name));
                 }
-                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
+                if self.inventory_port.equip_item(membership_id, hash, &resolved_character_id).await.is_err() {
                     return Err(format!("Rescued '{}', but failed to equip it.", item_name));
                 }
             }
             
-            ItemLocation::EquippedOnCharacter(ref current_character) 
-            | ItemLocation::InventoryOnCharacter(ref current_character) => {
+            ItemLocation::EquippedOnCharacter(_) => {
+                // We cannot transfer an actively equipped item without explicitly finding a replacement and equipping it first.
+                // For the MVP, we fail gracefully to avoid hitting 500 errors.
+                return Err(format!("'{}' is currently equipped on your other character. You'll need to unequip it first.", item_name));
+            }
+
+            ItemLocation::InventoryOnCharacter(ref current_character) => {
                 // Cross-Character Transfer Logic: Current Character -> Vault -> Target Character
                 if self.inventory_port.transfer_item(membership_id, hash, true, current_character).await.is_err() {
                     return Err(format!("Could not vault '{}' from your other character.", item_name));
                 }
-                if self.inventory_port.transfer_item(membership_id, hash, false, target_character_id).await.is_err() {
+                if self.inventory_port.transfer_item(membership_id, hash, false, &resolved_character_id).await.is_err() {
                     return Err(format!("Added '{}' to Vault, but could not transfer to your target character.", item_name));
                 }
-                if self.inventory_port.equip_item(membership_id, hash, target_character_id).await.is_err() {
+                if self.inventory_port.equip_item(membership_id, hash, &resolved_character_id).await.is_err() {
                     return Err(format!("Successfully moved '{}' across characters, but failed to equip it.", item_name));
                 }
             }
