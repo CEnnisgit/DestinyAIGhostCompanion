@@ -12,10 +12,10 @@ struct InboundVoice: Decodable {
 }
 
 /// A single line in the conversation transcript.
-struct ChatMessage: Identifiable, Equatable {
-    enum Role { case guardian, ghost }
+struct ChatMessage: Identifiable, Equatable, Codable {
+    enum Role: String, Codable { case guardian, ghost }
 
-    let id = UUID()
+    var id = UUID()
     let role: Role
     let text: String
     var intent: String?

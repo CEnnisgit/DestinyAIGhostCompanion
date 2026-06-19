@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var session: GhostSession
     @State private var showSettings = false
+    @State private var showConversations = false
 
     var body: some View {
         ZStack {
@@ -14,11 +15,19 @@ struct RootView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showConversations) { ConversationsView() }
     }
 
     private var header: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
+                Button { showConversations = true } label: {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(GhostTheme.accent)
+                }
+                .accessibilityLabel("Conversations")
+
                 GhostMark(size: 30, glow: session.health == .ok)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -35,7 +44,7 @@ struct RootView: View {
 
                 Spacer()
 
-                Button { session.clearConversation() } label: {
+                Button { session.newConversation() } label: {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(GhostTheme.accent)

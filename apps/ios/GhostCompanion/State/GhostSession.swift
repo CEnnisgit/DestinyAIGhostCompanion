@@ -1,6 +1,7 @@
 import Foundation
 
-/// App-wide state: backend connectivity and the live voice conversation.
+/// App-wide state: backend connectivity, the live voice socket, and the saved
+/// conversation threads (persisted locally).
 @MainActor
 final class GhostSession: ObservableObject {
     enum Health: Equatable {
@@ -21,18 +22,62 @@ final class GhostSession: ObservableObject {
 
     @Published private(set) var health: Health = .unknown
     @Published private(set) var connection: Connection = .disconnected
-    @Published private(set) var messages: [ChatMessage] = []
-    /// True while a sent message is awaiting the Ghost's reply (drives the typing indicator).
     @Published private(set) var isAwaiting = false
+
+    @Published private(set) var conversations: [Conversation]
+    @Published private(set) var selectedID: UUID
 
     private static let urlKey = "ghost.backend.url"
     private var socket: URLSessionWebSocketTask?
 
     init() {
         backendURLString = UserDefaults.standard.string(forKey: Self.urlKey) ?? "http://localhost:8080"
+        var loaded = Self.loadConversations().sorted { $0.updatedAt > $1.updatedAt }
+        if loaded.isEmpty { loaded = [Conversation()] }
+        conversations = loaded
+        selectedID = loaded[0].id
     }
 
     private var backend: GhostBackend? { GhostBackend(baseURLString: backendURLString) }
+
+    /// Messages of the currently selected conversation.
+    var messages: [ChatMessage] {
+        conversations.first { $0.id == selectedID }?.messages ?? []
+    }
+
+    // MARK: - Conversations
+
+    func newConversation() {
+        if let current = conversations.first(where: { $0.id == selectedID }), current.isEmpty {
+            return // reuse the already-empty thread
+        }
+        let conversation = Conversation()
+        conversations.insert(conversation, at: 0)
+        selectedID = conversation.id
+        isAwaiting = false
+        persist()
+    }
+
+    func selectConversation(_ id: UUID) {
+        selectedID = id
+        isAwaiting = false
+    }
+
+    func deleteConversation(_ id: UUID) {
+        conversations.removeAll { $0.id == id }
+        if conversations.isEmpty { conversations = [Conversation()] }
+        if !conversations.contains(where: { $0.id == selectedID }) {
+            selectedID = conversations[0].id
+        }
+        persist()
+    }
+
+    private func updateSelected(_ block: (inout Conversation) -> Void) {
+        guard let index = conversations.firstIndex(where: { $0.id == selectedID }) else { return }
+        block(&conversations[index])
+        conversations[index].updatedAt = Date()
+        persist()
+    }
 
     // MARK: - Health
 
@@ -66,15 +111,16 @@ final class GhostSession: ObservableObject {
         connection = .disconnected
     }
 
-    func clearConversation() {
-        messages = []
-        isAwaiting = false
-    }
-
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        messages.append(ChatMessage(role: .guardian, text: trimmed))
+
+        updateSelected { conversation in
+            if conversation.isEmpty && conversation.title == "New Conversation" {
+                conversation.title = Conversation.title(from: trimmed)
+            }
+            conversation.messages.append(ChatMessage(role: .guardian, text: trimmed))
+        }
 
         guard let socket,
               let data = try? JSONEncoder().encode(OutboundVoice(text: trimmed)),
@@ -102,6 +148,7 @@ final class GhostSession: ObservableObject {
                 case .success:
                     self.receiveLoop()
                 case .failure(let error):
+                    self.isAwaiting = false
                     self.connection = .failed(error.localizedDescription)
                 }
             }
@@ -110,12 +157,32 @@ final class GhostSession: ObservableObject {
 
     private func handleInbound(_ text: String) {
         isAwaiting = false
-        guard let data = text.data(using: .utf8),
-              let frame = try? JSONDecoder().decode(InboundVoice.self, from: data)
-        else {
-            messages.append(ChatMessage(role: .ghost, text: text))
-            return
+        let message: ChatMessage
+        if let data = text.data(using: .utf8),
+           let frame = try? JSONDecoder().decode(InboundVoice.self, from: data) {
+            message = ChatMessage(role: .ghost, text: frame.response, intent: frame.intent)
+        } else {
+            message = ChatMessage(role: .ghost, text: text)
         }
-        messages.append(ChatMessage(role: .ghost, text: frame.response, intent: frame.intent))
+        updateSelected { $0.messages.append(message) }
+    }
+
+    // MARK: - Persistence
+
+    private static var storeURL: URL {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return dir.appendingPathComponent("conversations.json")
+    }
+
+    private static func loadConversations() -> [Conversation] {
+        guard let data = try? Data(contentsOf: storeURL),
+              let conversations = try? JSONDecoder().decode([Conversation].self, from: data)
+        else { return [] }
+        return conversations
+    }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(conversations) else { return }
+        try? data.write(to: Self.storeURL, options: .atomic)
     }
 }
