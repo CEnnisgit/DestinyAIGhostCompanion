@@ -52,7 +52,7 @@ struct RootView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
-            Rectangle().fill(GhostTheme.goldHairline).frame(height: 1)
+            Rectangle().fill(GhostTheme.accentHairline).frame(height: 1)
         }
         .background(GhostTheme.background.opacity(0.6))
     }

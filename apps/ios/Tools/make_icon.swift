@@ -24,9 +24,9 @@ let bg = CGGradient(colorsSpace: cs,
                     locations: [0, 1])!
 ctx.drawLinearGradient(bg, start: CGPoint(x: 0, y: Double(side)), end: .zero, options: [])
 
-// Soft gold aura behind the mark.
+// Soft azure aura behind the mark.
 let aura = CGGradient(colorsSpace: cs,
-                      colors: [color(0.96, 0.78, 0.42, 0.50), color(0.96, 0.78, 0.42, 0)] as CFArray,
+                      colors: [color(0.275, 0.600, 0.980, 0.50), color(0.275, 0.600, 0.980, 0)] as CFArray,
                       locations: [0, 1])!
 ctx.drawRadialGradient(aura, startCenter: center, startRadius: 0, endCenter: center, endRadius: 380, options: [])
 
@@ -43,15 +43,15 @@ func diamond(scale: Double, corner: Double, line: Double, stroke: CGColor) {
     ctx.restoreGState()
 }
 
-diamond(scale: 0.50, corner: 64, line: 32, stroke: color(0.96, 0.78, 0.42))
-diamond(scale: 0.30, corner: 40, line: 20, stroke: color(0.96, 0.78, 0.42, 0.55))
+diamond(scale: 0.50, corner: 64, line: 32, stroke: color(0.275, 0.600, 0.980))
+diamond(scale: 0.30, corner: 40, line: 20, stroke: color(0.275, 0.600, 0.980, 0.55))
 
 // Glowing core.
 let core = CGGradient(colorsSpace: cs,
-                      colors: [color(1, 0.87, 0.55, 0.95), color(1, 0.87, 0.55, 0)] as CFArray,
+                      colors: [color(0.560, 0.800, 1.000, 0.95), color(0.560, 0.800, 1.000, 0)] as CFArray,
                       locations: [0, 1])!
 ctx.drawRadialGradient(core, startCenter: center, startRadius: 0, endCenter: center, endRadius: 160, options: [])
-ctx.setFillColor(color(1, 0.91, 0.66))
+ctx.setFillColor(color(0.820, 0.920, 1.000))
 ctx.fillEllipse(in: CGRect(x: center.x - 72, y: center.y - 72, width: 144, height: 144))
 
 guard let image = ctx.makeImage() else { fatalError("image") }
