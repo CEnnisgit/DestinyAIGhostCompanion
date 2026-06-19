@@ -12,6 +12,7 @@ sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",
     "postgres",
+    "sqlite",
     "macros",
     "chrono",
     "uuid",

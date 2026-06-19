@@ -13,7 +13,10 @@ use api::{
     build_router, AppState, BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig,
     OpenAiClient,
 };
-use db::{EmbeddingClient, GrimoireSearch, ManifestItemResolver, PostgresTokenStorageAdapter};
+use db::{
+    EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync,
+    PostgresTokenStorageAdapter,
+};
 use domain::auth::saga::OAuthSessionSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
@@ -106,6 +109,24 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .filter(|s| !s.trim().is_empty());
 
+    // --- Manifest sync (Phase 4E, opt-in) ---
+    // Downloads/loads the Bungie manifest + embeds lore in the background. Gated
+    // behind GHOST_MANIFEST_SYNC because it needs a real BUNGIE_API_KEY and pulls
+    // a large file; failures are logged, never fatal to startup.
+    if env_flag("GHOST_MANIFEST_SYNC") {
+        let sync = ManifestSync::new(
+            pool.clone(),
+            http.clone(),
+            oauth.api_key.clone(),
+            EmbeddingClient::from_env(http.clone()),
+        );
+        tokio::spawn(async move {
+            if let Err(err) = sync.sync_if_changed().await {
+                tracing::warn!(error = %err, "manifest sync failed");
+            }
+        });
+    }
+
     let state = AppState {
         auth_saga,
         oauth,
@@ -125,6 +146,13 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await.context("axum serve")?;
 
     Ok(())
+}
+
+/// True when an env var is set to a truthy value (`1`/`true`).
+fn env_flag(key: &str) -> bool {
+    std::env::var(key)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 /// Chooses the Ghost personality from `GHOST_PERSONALITY` (default: Warlock).
