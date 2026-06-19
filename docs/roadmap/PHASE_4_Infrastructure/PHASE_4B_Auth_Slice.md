@@ -1,9 +1,17 @@
 # Phase 4B: Auth Slice
 
-> **Status:** 🔲 Not Started
+> **Status:** 🟡 Code-complete — adapters implemented, `cargo build --workspace` + unit tests green; live OAuth round-trip pending Docker/Postgres.
 > **Objective:** Implement concrete adapters so the `OAuthSessionSaga` can persist tokens to Postgres and resolve user identity from Bungie.
-> **Crates:** `crates/db`, `crates/api`
+> **Crates:** `crates/db`, `crates/api`, `apps/server`
 > **Depends On:** Phase 4A (Postgres must be running)
+>
+> **Delivered:** `crates/db/src/postgres_token_storage.rs` (`PostgresTokenStorageAdapter`,
+> UPSERT/SELECT via runtime sqlx — compiles without a live DB);
+> `crates/api/src/bungie_identity_client.rs` (`BungieIdentityClient` via reqwest, +4 unit
+> tests for membership selection); `crates/api/src/bungie_oauth_routes.rs` (`/auth/login`,
+> `/auth/callback`, token exchange, `AppError`); `crates/api/src/lib.rs` (`build_router`
+> with `/health`); and `apps/server/src/main.rs` composition root (PgPool, auto-migrate on
+> boot, axum serve on :8080). Added `apps/server` to the workspace.
 
 ---
 
