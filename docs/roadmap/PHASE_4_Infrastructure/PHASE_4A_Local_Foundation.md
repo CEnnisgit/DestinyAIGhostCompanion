@@ -1,6 +1,6 @@
 # Phase 4A: Local Foundation
 
-> **Status:** 🟡 Code-complete — files scaffolded & `cargo build` green; live verification (`docker compose up`, `cargo sqlx migrate run`) pending Docker Desktop install.
+> **Status:** ✅ Verified — Postgres (pgvector/pg16) comes up healthy via `docker-compose up -d` (Colima runtime); both migrations apply (server auto-migrates on boot, `_sqlx_migrations` shows v1+v2); `bungie_tokens` schema and the `vector` extension confirmed live; `cargo build` green.
 > **Objective:** Get Docker, PostgreSQL, and the Rust workspace compiling with database connectivity.
 > **Crate:** N/A (DevOps scaffolding)
 >

@@ -1,6 +1,6 @@
 # Phase 4C: Conversation Slice
 
-> **Status:** 🟡 Code-complete — OpenAI-compatible client + `/ws/voice` WebSocket implemented; `cargo build`/tests green. Live socket test pending Docker + an LLM key.
+> **Status:** 🟢 Route-verified — `/ws/voice` is mounted and, with no LLM key configured, correctly returns 503 to an upgrade request (graceful-disable path works). ⛔ Remaining: a live voice turn (real WebSocket client + an `LLM_API_KEY`/`OPENAI_API_KEY`) to exercise `VoiceCommandSaga` → intent → response.
 > **Objective:** Build the communication bridge so the Electron/Web frontend can stream voice commands to the Ghost and receive AI-generated responses.
 > **Crates:** `crates/api`
 > **Depends On:** Phase 4B (user must be authenticated)

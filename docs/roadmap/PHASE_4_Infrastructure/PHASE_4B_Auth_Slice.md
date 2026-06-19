@@ -1,6 +1,6 @@
 # Phase 4B: Auth Slice
 
-> **Status:** 🟡 Code-complete — adapters implemented, `cargo build --workspace` + unit tests green; live OAuth round-trip pending Docker/Postgres.
+> **Status:** 🟢 Infra-verified — server boots against live Postgres, `/health`→200, and the `PostgresTokenStorageAdapter` UPSERT/SELECT SQL was validated against the live DB (insert→conflict-update→select round-trip). ⛔ Remaining: the browser OAuth round-trip (`/auth/login`→Bungie→`/auth/callback`) needs a real Bungie app (client id/secret/api key + registered redirect URI).
 > **Objective:** Implement concrete adapters so the `OAuthSessionSaga` can persist tokens to Postgres and resolve user identity from Bungie.
 > **Crates:** `crates/db`, `crates/api`, `apps/server`
 > **Depends On:** Phase 4A (Postgres must be running)
