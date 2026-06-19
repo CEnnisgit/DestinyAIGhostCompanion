@@ -1,0 +1,23 @@
+# Phase 4A: Local Foundation — PostgreSQL 16 with pgvector for the Ghost Companion backend.
+# Credentials come from the environment (see .env.example); nothing secret is hardcoded.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ghost_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ghost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ghost_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-ghost_companion}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ghost} -d ${POSTGRES_DB:-ghost_companion}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

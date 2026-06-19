@@ -1,8 +1,13 @@
 # Phase 4A: Local Foundation
 
-> **Status:** 🔲 Not Started
+> **Status:** 🟡 Code-complete — files scaffolded & `cargo build` green; live verification (`docker compose up`, `cargo sqlx migrate run`) pending Docker Desktop install.
 > **Objective:** Get Docker, PostgreSQL, and the Rust workspace compiling with database connectivity.
 > **Crate:** N/A (DevOps scaffolding)
+>
+> **Delivered:** `docker-compose.yml` (pgvector/pgvector:pg16), multi-stage `Dockerfile`
+> (builder bumped to Rust 1.x for edition 2024), `migrations/001_create_tokens_table.sql`,
+> `migrations/002_enable_pgvector.sql`, `.env.example`, and `sqlx` wired into
+> `[workspace.dependencies]`.
 
 ---
 
