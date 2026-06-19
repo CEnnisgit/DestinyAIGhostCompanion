@@ -5,47 +5,72 @@ struct RootView: View {
     @State private var showSettings = false
 
     var body: some View {
-        NavigationStack {
-            VoiceChatView()
-                .background(GhostTheme.background.ignoresSafeArea())
-                .navigationTitle("Ghost")
-                .navigationBarTitleDisplayMode(.inline)
-                .safeAreaInset(edge: .top) { statusBar }
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { showSettings = true } label: { Image(systemName: "gearshape") }
+        ZStack {
+            GhostTheme.backgroundGradient.ignoresSafeArea()
+            VStack(spacing: 0) {
+                header
+                VoiceChatView()
+            }
+        }
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showSettings) { SettingsView() }
+    }
+
+    private var header: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                GhostMark(size: 30, glow: session.health == .ok)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ghost")
+                        .font(.system(.title3, design: .default).weight(.bold))
+                        .foregroundStyle(GhostTheme.textPrimary)
+                    HStack(spacing: 5) {
+                        Circle().fill(statusColor).frame(width: 6, height: 6)
+                        Text(statusText)
+                            .font(GhostTheme.hud(10))
+                            .foregroundStyle(GhostTheme.textSecondary)
                     }
                 }
-                .sheet(isPresented: $showSettings) { SettingsView() }
+
+                Spacer()
+
+                Button { session.clearConversation() } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(GhostTheme.accent)
+                }
+                .accessibilityLabel("New conversation")
+
+                Button { showSettings = true } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(GhostTheme.accent)
+                }
+                .accessibilityLabel("Settings")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Rectangle().fill(GhostTheme.goldHairline).frame(height: 1)
         }
+        .background(GhostTheme.background.opacity(0.6))
     }
 
-    private var statusBar: some View {
-        HStack(spacing: 8) {
-            Circle().fill(healthColor).frame(width: 9, height: 9)
-            Text(healthLabel).font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Text(session.backendURLString).font(.caption2).foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
-    }
-
-    private var healthColor: Color {
+    private var statusColor: Color {
         switch session.health {
         case .ok: return .green
-        case .checking, .unknown: return .yellow
-        case .unreachable: return .red
+        case .checking, .unknown: return GhostTheme.accent
+        case .unreachable: return GhostTheme.solar
         }
     }
 
-    private var healthLabel: String {
+    private var statusText: String {
         switch session.health {
-        case .unknown: return "Not checked"
-        case .checking: return "Connecting…"
-        case .ok: return "Backend online"
-        case .unreachable(let message): return "Offline — \(message)"
+        case .unknown: return "STANDBY"
+        case .checking: return "LINKING…"
+        case .ok: return "ONLINE"
+        case .unreachable: return "OFFLINE"
         }
     }
 }

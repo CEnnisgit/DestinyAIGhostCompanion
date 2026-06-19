@@ -22,6 +22,8 @@ final class GhostSession: ObservableObject {
     @Published private(set) var health: Health = .unknown
     @Published private(set) var connection: Connection = .disconnected
     @Published private(set) var messages: [ChatMessage] = []
+    /// True while a sent message is awaiting the Ghost's reply (drives the typing indicator).
+    @Published private(set) var isAwaiting = false
 
     private static let urlKey = "ghost.backend.url"
     private var socket: URLSessionWebSocketTask?
@@ -64,6 +66,11 @@ final class GhostSession: ObservableObject {
         connection = .disconnected
     }
 
+    func clearConversation() {
+        messages = []
+        isAwaiting = false
+    }
+
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -74,9 +81,13 @@ final class GhostSession: ObservableObject {
               let json = String(data: data, encoding: .utf8)
         else { return }
 
+        isAwaiting = true
         socket.send(.string(json)) { [weak self] error in
             guard let error else { return }
-            Task { @MainActor in self?.connection = .failed(error.localizedDescription) }
+            Task { @MainActor in
+                self?.isAwaiting = false
+                self?.connection = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -98,6 +109,7 @@ final class GhostSession: ObservableObject {
     }
 
     private func handleInbound(_ text: String) {
+        isAwaiting = false
         guard let data = text.data(using: .utf8),
               let frame = try? JSONDecoder().decode(InboundVoice.self, from: data)
         else {
