@@ -35,15 +35,23 @@ pub struct BungieOAuthConfig {
     pub client_id: String,
     pub client_secret: String,
     pub api_key: String,
+    /// When set (e.g. `ghostcompanion://auth`), the callback redirects here with the
+    /// membership id so a native app's ASWebAuthenticationSession can complete the
+    /// flow. When `None`, the callback returns JSON (web clients).
+    pub mobile_callback: Option<String>,
 }
 
 impl BungieOAuthConfig {
-    /// Reads `BUNGIE_CLIENT_ID`, `BUNGIE_CLIENT_SECRET`, and `BUNGIE_API_KEY`.
+    /// Reads `BUNGIE_CLIENT_ID`, `BUNGIE_CLIENT_SECRET`, `BUNGIE_API_KEY`, and the
+    /// optional `GHOST_MOBILE_CALLBACK`.
     pub fn from_env() -> Result<Self, anyhow::Error> {
         Ok(Self {
             client_id: std::env::var("BUNGIE_CLIENT_ID")?,
             client_secret: std::env::var("BUNGIE_CLIENT_SECRET")?,
             api_key: std::env::var("BUNGIE_API_KEY")?,
+            mobile_callback: std::env::var("GHOST_MOBILE_CALLBACK")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
         })
     }
 }
@@ -89,13 +97,21 @@ struct CallbackQuery {
 }
 
 /// `GET /auth/callback?code=...` — exchange the code and run the login saga.
+/// Redirects to the native app scheme when configured; otherwise returns JSON.
 async fn callback(
     State(state): State<AppState>,
     Query(params): Query<CallbackQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Response, AppError> {
     let token = exchange_code_for_token(&state, &params.code).await?;
     let membership_id = state.auth_saga.process_new_login(token).await?;
-    Ok(Json(json!({ "membership_id": membership_id.0 })))
+
+    if let Some(scheme) = &state.oauth.mobile_callback {
+        let sep = if scheme.contains('?') { '&' } else { '?' };
+        let target = format!("{scheme}{sep}membership_id={}", membership_id.0);
+        return Ok(Redirect::to(&target).into_response());
+    }
+
+    Ok(Json(json!({ "membership_id": membership_id.0 })).into_response())
 }
 
 #[derive(Debug, Deserialize)]
