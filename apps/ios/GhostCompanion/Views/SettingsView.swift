@@ -2,12 +2,31 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var session: GhostSession
+    @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
     @State private var urlDraft: String = ""
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Bungie Account") {
+                    if let membershipID = auth.membershipID {
+                        LabeledContent("Membership ID", value: membershipID)
+                        Button("Sign Out", role: .destructive) { auth.signOut() }
+                    } else if auth.isAuthenticating {
+                        HStack { ProgressView(); Text("Signing in…") }
+                    } else {
+                        Button {
+                            auth.signIn(backendURLString: session.backendURLString)
+                        } label: {
+                            Label("Sign in with Bungie", systemImage: "person.badge.key")
+                        }
+                    }
+                    if let error = auth.errorMessage {
+                        Text(error).font(.footnote).foregroundStyle(.red)
+                    }
+                }
+
                 Section("Backend") {
                     TextField("Base URL", text: $urlDraft)
                         .textInputAutocapitalization(.never)

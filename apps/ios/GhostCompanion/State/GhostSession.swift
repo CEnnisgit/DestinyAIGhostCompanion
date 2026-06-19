@@ -47,11 +47,11 @@ final class GhostSession: ObservableObject {
 
     // MARK: - Voice WebSocket
 
-    func connectVoice() {
+    func connectVoice(membershipID: String? = nil, characterID: String? = nil) {
         guard let backend else { connection = .failed("Invalid backend URL"); return }
         disconnect()
         connection = .connecting
-        let task = backend.voiceSocket(token: nil, membershipID: nil, characterID: nil)
+        let task = backend.voiceSocket(token: nil, membershipID: membershipID, characterID: characterID)
         socket = task
         task.resume()
         connection = .connected
