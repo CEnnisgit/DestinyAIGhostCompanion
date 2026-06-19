@@ -1,9 +1,20 @@
 # Phase 4C: Conversation Slice
 
-> **Status:** 🔲 Not Started
+> **Status:** 🟡 Code-complete — OpenAI-compatible client + `/ws/voice` WebSocket implemented; `cargo build`/tests green. Live socket test pending Docker + an LLM key.
 > **Objective:** Build the communication bridge so the Electron/Web frontend can stream voice commands to the Ghost and receive AI-generated responses.
 > **Crates:** `crates/api`
 > **Depends On:** Phase 4B (user must be authenticated)
+>
+> **Delivered:** `crates/api/src/openai_client.rs` (`OpenAiClient` → `GenerativeAiPort`,
+> configurable `LLM_BASE_URL`/`LLM_MODEL` per ADR-007, JSON-object response coerced into
+> `VoiceIntent` with an adapter-side schema hint); `crates/api/src/websocket_handler.rs`
+> (`/ws/voice`, parses `{text}`, runs `VoiceCommandSaga`, returns `{response,intent}`, dev-token
+> auth seam + `describe_intent` test); wired into `build_router` and the `apps/server`
+> composition root (personality via `GHOST_PERSONALITY`, server boots even without an LLM key).
+>
+> **Note:** the spec referenced a `Greeting` intent; the real `VoiceIntent` enum has no such
+> variant, so greetings fall through to `Unknown`. Gear/lore execution is acknowledged only —
+> it lands in Phases 4D/4E.
 
 ---
 
