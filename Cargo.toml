@@ -1,5 +1,23 @@
 [workspace]
 members = [
-    "crates/*"
+    "crates/*",
+    "apps/server",
 ]
 resolver = "2"
+
+# Phase 4A: shared dependency versions. Crates opt in with e.g. `sqlx.workspace = true`.
+# sqlx is wired here now; the Postgres adapters that use it land in Phase 4B (crates/db).
+[workspace.dependencies]
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "macros",
+    "chrono",
+    "uuid",
+    "migrate",
+] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }

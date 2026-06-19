@@ -1,0 +1,153 @@
+//! Phase 4B: Bungie OAuth2 callback routes (axum) — the driving (inbound) adapter.
+//!
+//! `/auth/login`   → redirect the Guardian to Bungie's consent screen.
+//! `/auth/callback`→ exchange the returned code for tokens, then hand them to the
+//!                   domain `OAuthSessionSaga` which resolves identity + persists.
+//!
+//! ADR-005: delegated authentication — no passwords, 100% Bungie OAuth2 SSO.
+
+use std::sync::Arc;
+
+use axum::{
+    extract::{Query, State},
+    response::{IntoResponse, Json, Redirect, Response},
+    routing::get,
+    Router,
+};
+use chrono::{Duration, Utc};
+use serde::Deserialize;
+use serde_json::json;
+
+use domain::auth::saga::OAuthSessionSaga;
+use domain::auth::token::BungieOAuthToken;
+
+const AUTHORIZE_URL: &str = "https://www.bungie.net/en/OAuth/Authorize";
+const TOKEN_URL: &str = "https://www.bungie.net/Platform/App/OAuth/Token/";
+/// Bungie refresh tokens live ~90 days; used only when the response omits the field.
+const DEFAULT_REFRESH_EXPIRES_SECS: i64 = 90 * 24 * 60 * 60;
+
+/// Bungie OAuth client credentials (loaded from the environment by the composition root).
+#[derive(Clone)]
+pub struct BungieOAuthConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub api_key: String,
+}
+
+impl BungieOAuthConfig {
+    /// Reads `BUNGIE_CLIENT_ID`, `BUNGIE_CLIENT_SECRET`, and `BUNGIE_API_KEY`.
+    pub fn from_env() -> Result<Self, anyhow::Error> {
+        Ok(Self {
+            client_id: std::env::var("BUNGIE_CLIENT_ID")?,
+            client_secret: std::env::var("BUNGIE_CLIENT_SECRET")?,
+            api_key: std::env::var("BUNGIE_API_KEY")?,
+        })
+    }
+}
+
+/// Shared state for the auth routes.
+#[derive(Clone)]
+pub struct AppState {
+    pub auth_saga: Arc<OAuthSessionSaga>,
+    pub oauth: BungieOAuthConfig,
+    pub http: reqwest::Client,
+}
+
+/// Mounts the auth routes onto a router using the provided state.
+pub fn auth_router(state: AppState) -> Router {
+    Router::new()
+        .route("/auth/login", get(login))
+        .route("/auth/callback", get(callback))
+        .with_state(state)
+}
+
+/// `GET /auth/login` — send the user to Bungie's consent screen.
+async fn login(State(state): State<AppState>) -> Redirect {
+    let url = format!(
+        "{AUTHORIZE_URL}?client_id={}&response_type=code",
+        state.oauth.client_id
+    );
+    Redirect::temporary(&url)
+}
+
+#[derive(Debug, Deserialize)]
+struct CallbackQuery {
+    code: String,
+}
+
+/// `GET /auth/callback?code=...` — exchange the code and run the login saga.
+async fn callback(
+    State(state): State<AppState>,
+    Query(params): Query<CallbackQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let token = exchange_code_for_token(&state, &params.code).await?;
+    let membership_id = state.auth_saga.process_new_login(token).await?;
+    Ok(Json(json!({ "membership_id": membership_id.0 })))
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenExchangeResponse {
+    access_token: String,
+    refresh_token: String,
+    expires_in: i64,
+    refresh_expires_in: Option<i64>,
+}
+
+/// Exchanges an authorization `code` for a `BungieOAuthToken` via Bungie's token endpoint.
+async fn exchange_code_for_token(
+    state: &AppState,
+    code: &str,
+) -> Result<BungieOAuthToken, anyhow::Error> {
+    let form = [
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("client_id", state.oauth.client_id.as_str()),
+        ("client_secret", state.oauth.client_secret.as_str()),
+    ];
+
+    let resp: TokenExchangeResponse = state
+        .http
+        .post(TOKEN_URL)
+        .header("X-API-Key", &state.oauth.api_key)
+        .form(&form)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let now = Utc::now();
+    let refresh_secs = resp
+        .refresh_expires_in
+        .unwrap_or(DEFAULT_REFRESH_EXPIRES_SECS);
+
+    Ok(BungieOAuthToken {
+        access_token: resp.access_token,
+        refresh_token: resp.refresh_token,
+        expires_at: now + Duration::seconds(resp.expires_in),
+        refresh_expires_at: now + Duration::seconds(refresh_secs),
+    })
+}
+
+/// Maps domain/adapter errors to a 500 response without leaking internals to the client.
+pub struct AppError(anyhow::Error);
+
+impl<E> From<E> for AppError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self(err.into())
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        tracing::error!(error = %self.0, "auth route failed");
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error",
+        )
+            .into_response()
+    }
+}

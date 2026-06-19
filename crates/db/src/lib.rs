@@ -1,14 +1,5 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! `db` crate — outbound Postgres adapters for the Ghost Companion domain ports.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod postgres_token_storage;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use postgres_token_storage::PostgresTokenStorageAdapter;
