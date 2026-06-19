@@ -12,7 +12,7 @@ Welcome to the central tracking board for the Rust migration.
    - ✅ [4A: Local Foundation](./PHASE_4_Infrastructure/PHASE_4A_Local_Foundation.md) — Docker, Postgres, pgvector *(verified live)*
    - 🟢 [4B: Auth Slice](./PHASE_4_Infrastructure/PHASE_4B_Auth_Slice.md) — OAuth token persistence + Bungie identity *(adapters live-verified; browser OAuth pending real Bungie creds)*
    - 🟢 [4C: Conversation Slice](./PHASE_4_Infrastructure/PHASE_4C_Conversation_Slice.md) — WebSocket server + OpenAI client *(route verified; live voice turn pending LLM key)*
-   - 🔲 [4D: Inventory Slice](./PHASE_4_Infrastructure/PHASE_4D_Inventory_Slice.md) — Bungie API equip/transfer/vault
+   - 🟢 [4D: Inventory Slice](./PHASE_4_Infrastructure/PHASE_4D_Inventory_Slice.md) — Bungie API equip/transfer/vault *(adapters + saga wired; manifest resolver verified live; in-game equip pending real account + session work)*
    - 🔲 [4E: Lore RAG Slice](./PHASE_4_Infrastructure/PHASE_4E_Lore_RAG_Slice.md) — Manifest ETL + pgvector search
 
 ### 🔲 Queued
