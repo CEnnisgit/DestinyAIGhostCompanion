@@ -21,6 +21,7 @@ use serde_json::json;
 
 use domain::auth::membership::BungieMembershipId;
 use domain::inventory::saga::EquipItemSaga;
+use domain::lore::saga::LoreSaga;
 use domain::voice_ai::intent::VoiceIntent;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
@@ -74,7 +75,10 @@ async fn voice_ws_handler(
     match state.voice_saga.clone() {
         Some(saga) => {
             let equip_saga = state.equip_saga.clone();
-            ws.on_upgrade(move |socket| handle_socket(socket, saga, equip_saga, equip_ctx))
+            let lore_saga = state.lore_saga.clone();
+            ws.on_upgrade(move |socket| {
+                handle_socket(socket, saga, equip_saga, lore_saga, equip_ctx)
+            })
         }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -97,12 +101,20 @@ async fn handle_socket(
     mut socket: WebSocket,
     saga: Arc<VoiceCommandSaga>,
     equip_saga: Arc<EquipItemSaga>,
+    lore_saga: Option<Arc<LoreSaga>>,
     equip_ctx: Option<EquipContext>,
 ) {
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             Message::Text(text) => {
-                let reply = process_text(&saga, &equip_saga, equip_ctx.as_ref(), &text).await;
+                let reply = process_text(
+                    &saga,
+                    &equip_saga,
+                    lore_saga.as_deref(),
+                    equip_ctx.as_ref(),
+                    &text,
+                )
+                .await;
                 if socket.send(Message::Text(reply)).await.is_err() {
                     break;
                 }
@@ -122,6 +134,7 @@ struct InboundVoice {
 async fn process_text(
     saga: &VoiceCommandSaga,
     equip_saga: &EquipItemSaga,
+    lore_saga: Option<&LoreSaga>,
     equip_ctx: Option<&EquipContext>,
     raw: &str,
 ) -> String {
@@ -146,6 +159,15 @@ async fn process_text(
                     Err(graceful) => graceful,
                 };
                 return json!({ "response": response, "intent": "equip" }).to_string();
+            }
+
+            // Answer lore queries from the RAG pipeline when embeddings are configured.
+            if let (VoiceIntent::Lore { topic }, Some(lore)) = (&intent, lore_saga) {
+                let response = match lore.process_lore_query(topic).await {
+                    Ok(context) => context,
+                    Err(graceful) => graceful,
+                };
+                return json!({ "response": response, "intent": "lore" }).to_string();
             }
 
             let (label, response) = describe_intent(&intent);

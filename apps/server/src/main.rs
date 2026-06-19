@@ -13,9 +13,10 @@ use api::{
     build_router, AppState, BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig,
     OpenAiClient,
 };
-use db::{ManifestItemResolver, PostgresTokenStorageAdapter};
+use db::{EmbeddingClient, GrimoireSearch, ManifestItemResolver, PostgresTokenStorageAdapter};
 use domain::auth::saga::OAuthSessionSaga;
 use domain::inventory::saga::EquipItemSaga;
+use domain::lore::saga::LoreSaga;
 use domain::voice_ai::personalities::GhostPersonality;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
@@ -67,8 +68,22 @@ async fn main() -> anyhow::Result<()> {
         oauth.api_key.clone(),
         token_storage,
     ));
-    let manifest_resolver = Arc::new(ManifestItemResolver::new(pool));
+    let manifest_resolver = Arc::new(ManifestItemResolver::new(pool.clone()));
     let equip_saga = Arc::new(EquipItemSaga::new(inventory_client, manifest_resolver));
+
+    // --- Lore RAG (Phase 4E) ---
+    // Built only when an embeddings provider is configured.
+    let lore_saga = match EmbeddingClient::from_env(http.clone()) {
+        Some(embeddings) => {
+            let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
+            tracing::info!("lore RAG enabled");
+            Some(Arc::new(LoreSaga::new(grimoire)))
+        }
+        None => {
+            tracing::warn!("lore RAG disabled — set EMBEDDING_API_KEY/OPENAI_API_KEY to enable");
+            None
+        }
+    };
 
     // --- Voice AI (Phase 4C) ---
     // Built only when an LLM is configured; the server still boots without one
@@ -97,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
         http,
         voice_saga,
         equip_saga,
+        lore_saga,
         ws_dev_token,
     };
 

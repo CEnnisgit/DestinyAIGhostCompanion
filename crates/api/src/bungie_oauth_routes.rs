@@ -21,6 +21,7 @@ use serde_json::json;
 use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::token::BungieOAuthToken;
 use domain::inventory::saga::EquipItemSaga;
+use domain::lore::saga::LoreSaga;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
 const AUTHORIZE_URL: &str = "https://www.bungie.net/en/OAuth/Authorize";
@@ -57,6 +58,8 @@ pub struct AppState {
     pub voice_saga: Option<Arc<VoiceCommandSaga>>,
     /// Inventory transaction engine (equip/transfer/vault/postmaster).
     pub equip_saga: Arc<EquipItemSaga>,
+    /// Lore RAG retrieval; `None` when no embeddings provider is configured.
+    pub lore_saga: Option<Arc<LoreSaga>>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
     /// open locally. TODO: replace with real Bungie-session/JWT validation once
     /// session minting exists (Phase 4B currently returns the membership id only).
