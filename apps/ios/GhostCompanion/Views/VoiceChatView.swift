@@ -3,6 +3,7 @@ import SwiftUI
 /// The conversation transcript + input bar.
 struct VoiceChatView: View {
     @EnvironmentObject private var session: GhostSession
+    @EnvironmentObject private var auth: AuthStore
     @State private var draft: String = ""
 
     var body: some View {
@@ -62,7 +63,9 @@ struct VoiceChatView: View {
     private func sendDraft() {
         let text = draft
         draft = ""
-        if session.connection != .connected { session.connectVoice() }
+        if session.connection != .connected {
+            session.connectVoice(membershipID: auth.membershipID)
+        }
         session.send(text)
     }
 }
