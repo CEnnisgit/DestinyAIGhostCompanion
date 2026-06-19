@@ -1,20 +1,20 @@
 import SwiftUI
 
-/// Destiny-flavored design tokens: deep-space dark, Ghost gold, elemental accents,
-/// and a HUD monospace for labels.
+/// Destiny-flavored design tokens: deep-space dark with an electric-blue Ghost
+/// accent, elemental highlights, and a HUD monospace for labels.
 enum GhostTheme {
     // Surfaces
-    static let background = Color(red: 0.039, green: 0.055, blue: 0.078)
-    static let surface = Color(red: 0.086, green: 0.106, blue: 0.141)
-    static let surfaceElevated = Color(red: 0.122, green: 0.149, blue: 0.196)
+    static let background = Color(red: 0.027, green: 0.043, blue: 0.078)
+    static let surface = Color(red: 0.075, green: 0.098, blue: 0.149)
+    static let surfaceElevated = Color(red: 0.110, green: 0.141, blue: 0.204)
 
-    // Brand
-    static let accent = Color(red: 0.957, green: 0.780, blue: 0.416)        // Ghost gold
-    static let accentBright = Color(red: 1.000, green: 0.860, blue: 0.560)
+    // Brand — electric azure (the Ghost's light)
+    static let accent = Color(red: 0.275, green: 0.600, blue: 0.980)
+    static let accentBright = Color(red: 0.560, green: 0.800, blue: 1.000)
 
     // Text
-    static let textPrimary = Color(red: 0.937, green: 0.953, blue: 0.976)   // Traveler white
-    static let textSecondary = Color(red: 0.600, green: 0.643, blue: 0.706)
+    static let textPrimary = Color(red: 0.918, green: 0.945, blue: 0.980)   // Traveler white
+    static let textSecondary = Color(red: 0.541, green: 0.604, blue: 0.690)
 
     // Elemental accents
     static let arc = Color(red: 0.475, green: 0.886, blue: 1.000)           // Arc cyan
@@ -22,13 +22,13 @@ enum GhostTheme {
     static let void = Color(red: 0.690, green: 0.545, blue: 1.000)          // Void purple
 
     static let hairline = Color.white.opacity(0.08)
-    static let goldHairline = accent.opacity(0.25)
+    static let accentHairline = accent.opacity(0.30)
 
     /// Vertical space gradient for the app background.
     static var backgroundGradient: LinearGradient {
         LinearGradient(
             colors: [
-                Color(red: 0.055, green: 0.078, blue: 0.118),
+                Color(red: 0.043, green: 0.075, blue: 0.133),
                 background,
                 Color.black
             ],

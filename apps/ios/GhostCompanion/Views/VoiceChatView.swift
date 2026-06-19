@@ -85,7 +85,7 @@ struct VoiceChatView: View {
 
     private var composer: some View {
         VStack(spacing: 0) {
-            Rectangle().fill(GhostTheme.goldHairline).frame(height: 1)
+            Rectangle().fill(GhostTheme.accentHairline).frame(height: 1)
             HStack(spacing: 10) {
                 Button { Task { await toggleMic() } } label: {
                     Image(systemName: voice.isRecording ? "mic.fill" : "mic")
@@ -119,7 +119,7 @@ struct VoiceChatView: View {
                     .fill(GhostTheme.surface)
                     .overlay(
                         RoundedRectangle(cornerRadius: 26, style: .continuous)
-                            .stroke(GhostTheme.goldHairline, lineWidth: 1)
+                            .stroke(GhostTheme.accentHairline, lineWidth: 1)
                     )
             )
             .padding(.horizontal, 12)
@@ -183,7 +183,7 @@ private struct MessageRow: View {
                             .fill(GhostTheme.surfaceElevated)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(GhostTheme.goldHairline, lineWidth: 1)
+                                    .stroke(GhostTheme.accentHairline, lineWidth: 1)
                             )
                     )
             }
