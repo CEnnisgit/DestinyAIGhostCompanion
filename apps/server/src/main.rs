@@ -9,9 +9,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use sqlx::postgres::PgPoolOptions;
 
-use api::{build_router, AppState, BungieIdentityClient, BungieOAuthConfig, OpenAiClient};
-use db::PostgresTokenStorageAdapter;
+use api::{
+    build_router, AppState, BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig,
+    OpenAiClient,
+};
+use db::{ManifestItemResolver, PostgresTokenStorageAdapter};
 use domain::auth::saga::OAuthSessionSaga;
+use domain::inventory::saga::EquipItemSaga;
 use domain::voice_ai::personalities::GhostPersonality;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
@@ -48,12 +52,23 @@ async fn main() -> anyhow::Result<()> {
         .context("BUNGIE_CLIENT_ID / BUNGIE_CLIENT_SECRET / BUNGIE_API_KEY must be set")?;
     let http = reqwest::Client::new();
 
-    let token_storage = Arc::new(PostgresTokenStorageAdapter::new(pool));
+    let token_storage = Arc::new(PostgresTokenStorageAdapter::new(pool.clone()));
     let identity_provider = Arc::new(BungieIdentityClient::new(
         http.clone(),
         oauth.api_key.clone(),
     ));
-    let auth_saga = Arc::new(OAuthSessionSaga::new(token_storage, identity_provider));
+    let auth_saga = Arc::new(OAuthSessionSaga::new(token_storage.clone(), identity_provider));
+
+    // --- Inventory (Phase 4D) ---
+    // The inventory client shares the token store so it can authenticate Bungie
+    // mutations on the user's behalf.
+    let inventory_client = Arc::new(BungieInventoryClient::new(
+        http.clone(),
+        oauth.api_key.clone(),
+        token_storage,
+    ));
+    let manifest_resolver = Arc::new(ManifestItemResolver::new(pool));
+    let equip_saga = Arc::new(EquipItemSaga::new(inventory_client, manifest_resolver));
 
     // --- Voice AI (Phase 4C) ---
     // Built only when an LLM is configured; the server still boots without one
@@ -81,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         oauth,
         http,
         voice_saga,
+        equip_saga,
         ws_dev_token,
     };
 

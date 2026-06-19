@@ -19,6 +19,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
+use domain::auth::membership::BungieMembershipId;
+use domain::inventory::saga::EquipItemSaga;
 use domain::voice_ai::intent::VoiceIntent;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
@@ -34,6 +36,19 @@ pub fn voice_ws_router(state: AppState) -> Router {
 #[derive(Debug, Deserialize)]
 struct WsAuthQuery {
     token: Option<String>,
+    // DEV SEAM: a real implementation derives these from the authenticated
+    // session (Bungie membership) and resolves the character from the intent's
+    // class. Until session minting exists they may be passed as query params so
+    // the equip flow is end-to-end testable. TODO: replace with real session.
+    membership_id: Option<String>,
+    character_id: Option<String>,
+}
+
+/// The authenticated context needed to execute gear actions.
+#[derive(Clone)]
+struct EquipContext {
+    membership_id: BungieMembershipId,
+    character_id: String,
 }
 
 /// Validates the connection, then upgrades to a WebSocket if voice AI is available.
@@ -46,8 +61,21 @@ async fn voice_ws_handler(
         return (StatusCode::UNAUTHORIZED, "missing or invalid session token").into_response();
     }
 
+    let equip_ctx = match (query.membership_id, query.character_id) {
+        (Some(m), Some(c)) if !m.is_empty() && !c.is_empty() => {
+            BungieMembershipId::new(m).ok().map(|membership_id| EquipContext {
+                membership_id,
+                character_id: c,
+            })
+        }
+        _ => None,
+    };
+
     match state.voice_saga.clone() {
-        Some(saga) => ws.on_upgrade(move |socket| handle_socket(socket, saga)),
+        Some(saga) => {
+            let equip_saga = state.equip_saga.clone();
+            ws.on_upgrade(move |socket| handle_socket(socket, saga, equip_saga, equip_ctx))
+        }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "voice AI is not configured (set LLM_API_KEY / OPENAI_API_KEY)",
@@ -65,11 +93,16 @@ fn is_authorized(state: &AppState, token: Option<&str>) -> bool {
     }
 }
 
-async fn handle_socket(mut socket: WebSocket, saga: Arc<VoiceCommandSaga>) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    saga: Arc<VoiceCommandSaga>,
+    equip_saga: Arc<EquipItemSaga>,
+    equip_ctx: Option<EquipContext>,
+) {
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             Message::Text(text) => {
-                let reply = process_text(&saga, &text).await;
+                let reply = process_text(&saga, &equip_saga, equip_ctx.as_ref(), &text).await;
                 if socket.send(Message::Text(reply)).await.is_err() {
                     break;
                 }
@@ -86,7 +119,12 @@ struct InboundVoice {
 }
 
 /// Parses one inbound frame, runs the saga, and renders the JSON reply string.
-async fn process_text(saga: &VoiceCommandSaga, raw: &str) -> String {
+async fn process_text(
+    saga: &VoiceCommandSaga,
+    equip_saga: &EquipItemSaga,
+    equip_ctx: Option<&EquipContext>,
+    raw: &str,
+) -> String {
     let Ok(inbound) = serde_json::from_str::<InboundVoice>(raw) else {
         return json!({
             "response": "I couldn't parse that message. Send { \"text\": \"...\" }.",
@@ -97,6 +135,19 @@ async fn process_text(saga: &VoiceCommandSaga, raw: &str) -> String {
 
     match saga.process_voice_command(&inbound.text).await {
         Ok(intent) => {
+            // Execute equips for real when we have an authenticated context;
+            // otherwise (and for not-yet-wired intents) acknowledge.
+            if let (VoiceIntent::Equip { item_name, .. }, Some(ctx)) = (&intent, equip_ctx) {
+                let response = match equip_saga
+                    .process_equip(&ctx.membership_id, item_name, &ctx.character_id)
+                    .await
+                {
+                    Ok(success) => success,
+                    Err(graceful) => graceful,
+                };
+                return json!({ "response": response, "intent": "equip" }).to_string();
+            }
+
             let (label, response) = describe_intent(&intent);
             json!({ "response": response, "intent": label }).to_string()
         }

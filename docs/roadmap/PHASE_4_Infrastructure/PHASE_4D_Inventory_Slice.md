@@ -1,9 +1,26 @@
 # Phase 4D: Inventory Slice
 
-> **Status:** 🔲 Not Started
+> **Status:** 🟢 Code-complete — adapters + saga wired, `cargo build`/tests green, manifest resolver verified live; full in-game equip pending a real Bungie account + the auth-context gaps below.
 > **Objective:** Implement the Bungie API HTTP client so the Ghost can physically move, equip, and vault weapons and armor in Destiny 2.
 > **Crates:** `crates/api`, `crates/db`
 > **Depends On:** Phase 4B (authenticated user with stored token)
+>
+> **Delivered:** `migrations/003_create_destiny_items.sql`; `crates/db/.../manifest_item_resolver.rs`
+> (`ManifestItemResolver` → `ManifestDatabasePort`, ILIKE exact-then-fuzzy match — **verified live**:
+> `'sunshot'` resolves to the exotic hash over the ornament); `crates/api/.../bungie_inventory_client.rs`
+> (`BungieInventoryClient` → `BungieInventoryPort`, serial Bungie mutations per ADR-010, +6 unit
+> tests for profile location classification & membership-type extraction); `EquipItemSaga` wired in
+> `apps/server` (shares the token store); and `/ws/voice` now routes `VoiceIntent::Equip` to the saga.
+>
+> **⚠️ Design gaps surfaced (the domain ports must not be modified, so the adapter works around them):**
+> 1. The ports pass only `membership_id` + `hash` (+ `character_id`) — not the OAuth token,
+>    `membershipType`, or item *instance* id Bungie needs. The adapter re-resolves all three per call
+>    (token from the store, type from `GetMembershipsForCurrentUser`, instance id from the profile).
+>    Functionally correct but chatty; ADR-014-style caching would help.
+> 2. **No session→membership mapping yet** (4B returns the membership id but mints no session/JWT), and
+>    the `VoiceIntent::Equip` carries a `character_class`, not a `character_id`. As a dev seam, `/ws/voice`
+>    accepts `membership_id` + `character_id` query params so the equip flow is testable end-to-end.
+>    Real session minting + class→character resolution are follow-ups.
 
 ---
 
