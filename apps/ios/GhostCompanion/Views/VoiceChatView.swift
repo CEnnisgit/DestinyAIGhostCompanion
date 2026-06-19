@@ -4,6 +4,7 @@ import SwiftUI
 struct VoiceChatView: View {
     @EnvironmentObject private var session: GhostSession
     @EnvironmentObject private var auth: AuthStore
+    @StateObject private var voice = VoiceRecognizer()
     @State private var draft: String = ""
 
     var body: some View {
@@ -45,6 +46,13 @@ struct VoiceChatView: View {
 
     private var inputBar: some View {
         HStack(spacing: 10) {
+            Button { Task { await toggleMic() } } label: {
+                Image(systemName: voice.isRecording ? "mic.fill" : "mic")
+                    .font(.title2)
+                    .foregroundStyle(voice.isRecording ? Color.red : GhostTheme.accent)
+            }
+            .accessibilityLabel(voice.isRecording ? "Stop recording" : "Speak")
+
             TextField("Speak to your Ghost…", text: $draft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
@@ -58,6 +66,18 @@ struct VoiceChatView: View {
         }
         .padding()
         .background(.ultraThinMaterial)
+        .onChange(of: voice.transcript) { _, newValue in
+            if voice.isRecording { draft = newValue }
+        }
+    }
+
+    private func toggleMic() async {
+        if voice.isRecording {
+            voice.stop()
+            return
+        }
+        guard await voice.requestPermissions() else { return }
+        voice.start()
     }
 
     private func sendDraft() {
