@@ -1,9 +1,19 @@
 # Phase 4E: Lore RAG Slice
 
-> **Status:** 🔲 Not Started
+> **Status:** 🟢 Code-complete — full RAG pipeline implemented; `cargo build`/tests green; pgvector cosine search verified live. Manifest download + embedding backfill need a real `BUNGIE_API_KEY` + embeddings key to run.
 > **Objective:** Build the Retrieval-Augmented Generation pipeline so the Ghost can answer Destiny lore questions by semantically searching the Bungie Manifest.
 > **Crates:** `crates/db`, `crates/api`
 > **Depends On:** Phase 4A (Postgres + pgvector), Phase 4C (GenerativeAiPort)
+>
+> **Delivered:** migrations 004 (`destiny_lore` + `vector(1536)` ivfflat) & 005 (`manifest_metadata`);
+> `EmbeddingClient` (OpenAI-compatible, ADR-007); `GrimoireSearch` → `GrimoireDatabasePort`
+> (embed topic → cosine top-5 → context — **search verified live**); `ManifestSync` → manifest
+> download/extract (zip + sqlx-sqlite), item+lore upsert, version-gated re-run, batched embedding
+> backfill (ADR-014/015/016); `LoreSaga` wired and `/ws/voice` routes `VoiceIntent::Lore` to it;
+> opt-in startup sync via `GHOST_MANIFEST_SYNC=1`.
+>
+> **Note:** the real `LoreSaga::new(db_port)` takes only the grimoire port (not an LLM), so it returns
+> the retrieved RAG context directly — feeding it through the LLM for prose is a later enhancement.
 
 ---
 
