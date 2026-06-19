@@ -49,12 +49,16 @@ struct SettingsView: View {
                     LabeledContent("Not affiliated with Bungie, Inc.", value: "")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(GhostTheme.backgroundGradient.ignoresSafeArea())
             .navigationTitle("Settings")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
+            .tint(GhostTheme.accent)
+            .preferredColorScheme(.dark)
             .onAppear { urlDraft = session.backendURLString }
         }
     }
