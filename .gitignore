@@ -40,3 +40,9 @@ data/*.db-journal
 # BFG cleanup
 bfg.jar
 *.bfg-report/
+
+# XcodeGen-generated project + iOS build output
+apps/ios/GhostCompanion.xcodeproj/
+apps/ios/build/
+apps/ios/DerivedData/
+**/*.xcuserstate
