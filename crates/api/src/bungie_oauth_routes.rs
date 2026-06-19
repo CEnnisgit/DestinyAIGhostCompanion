@@ -20,6 +20,7 @@ use serde_json::json;
 
 use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::token::BungieOAuthToken;
+use domain::voice_ai::saga::VoiceCommandSaga;
 
 const AUTHORIZE_URL: &str = "https://www.bungie.net/en/OAuth/Authorize";
 const TOKEN_URL: &str = "https://www.bungie.net/Platform/App/OAuth/Token/";
@@ -45,12 +46,18 @@ impl BungieOAuthConfig {
     }
 }
 
-/// Shared state for the auth routes.
+/// Shared state for the HTTP + WebSocket routes.
 #[derive(Clone)]
 pub struct AppState {
     pub auth_saga: Arc<OAuthSessionSaga>,
     pub oauth: BungieOAuthConfig,
     pub http: reqwest::Client,
+    /// Voice command orchestrator; `None` when no LLM is configured (server still boots).
+    pub voice_saga: Option<Arc<VoiceCommandSaga>>,
+    /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
+    /// open locally. TODO: replace with real Bungie-session/JWT validation once
+    /// session minting exists (Phase 4B currently returns the membership id only).
+    pub ws_dev_token: Option<String>,
 }
 
 /// Mounts the auth routes onto a router using the provided state.

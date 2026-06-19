@@ -9,9 +9,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use sqlx::postgres::PgPoolOptions;
 
-use api::{build_router, AppState, BungieIdentityClient, BungieOAuthConfig};
+use api::{build_router, AppState, BungieIdentityClient, BungieOAuthConfig, OpenAiClient};
 use db::PostgresTokenStorageAdapter;
 use domain::auth::saga::OAuthSessionSaga;
+use domain::voice_ai::personalities::GhostPersonality;
+use domain::voice_ai::saga::VoiceCommandSaga;
 
 const BIND_ADDR: &str = "0.0.0.0:8080";
 
@@ -53,10 +55,33 @@ async fn main() -> anyhow::Result<()> {
     ));
     let auth_saga = Arc::new(OAuthSessionSaga::new(token_storage, identity_provider));
 
+    // --- Voice AI (Phase 4C) ---
+    // Built only when an LLM is configured; the server still boots without one
+    // (the /ws/voice route then reports the feature as unavailable).
+    let voice_saga = match OpenAiClient::from_env(http.clone()) {
+        Some(client) => {
+            let primary = Arc::new(client);
+            // ADR-008 failover: a distinct fallback port can be wired here later.
+            let saga =
+                VoiceCommandSaga::new(primary, None, personality_from_env());
+            tracing::info!("voice AI enabled");
+            Some(Arc::new(saga))
+        }
+        None => {
+            tracing::warn!("voice AI disabled — set LLM_API_KEY/OPENAI_API_KEY to enable /ws/voice");
+            None
+        }
+    };
+    let ws_dev_token = std::env::var("GHOST_WS_DEV_TOKEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+
     let state = AppState {
         auth_saga,
         oauth,
         http,
+        voice_saga,
+        ws_dev_token,
     };
 
     // --- Serve ---
@@ -68,4 +93,18 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await.context("axum serve")?;
 
     Ok(())
+}
+
+/// Chooses the Ghost personality from `GHOST_PERSONALITY` (default: Warlock).
+fn personality_from_env() -> GhostPersonality {
+    match std::env::var("GHOST_PERSONALITY")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "titan" => GhostPersonality::Titan,
+        "hunter" => GhostPersonality::Hunter,
+        "failsafe" => GhostPersonality::Failsafe,
+        _ => GhostPersonality::Warlock,
+    }
 }
