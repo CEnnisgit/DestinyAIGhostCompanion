@@ -1,0 +1,43 @@
+# Render blueprint for the Ghost Companion backend (Rust + Postgres/pgvector).
+# Create with: Render dashboard → New → Blueprint → pick this repo.
+# Secrets marked `sync: false` must be set in the dashboard before first deploy.
+services:
+  - type: web
+    name: ghost-companion-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ghost-companion-db
+          property: connectionString
+      # Bungie application (https://www.bungie.net/en/Application)
+      - key: BUNGIE_API_KEY
+        sync: false
+      - key: BUNGIE_CLIENT_ID
+        sync: false
+      - key: BUNGIE_CLIENT_SECRET
+        sync: false
+      # Native-app OAuth: redirect the callback to the iOS URL scheme.
+      - key: GHOST_MOBILE_CALLBACK
+        value: ghostcompanion://auth
+      # Generative AI (OpenAI-compatible; ADR-007). Set the key as a secret.
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      # Download + embed the Destiny manifest on boot (needs a real Bungie key).
+      - key: GHOST_MANIFEST_SYNC
+        value: "1"
+
+databases:
+  - name: ghost-companion-db
+    # Render Postgres supports the pgvector extension (migration 002).
+    plan: basic-256mb
+    postgresMajorVersion: "16"

@@ -23,7 +23,7 @@ use domain::lore::saga::LoreSaga;
 use domain::voice_ai::personalities::GhostPersonality;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
-const BIND_ADDR: &str = "0.0.0.0:8080";
+const DEFAULT_PORT: &str = "8080";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -144,11 +144,14 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // --- Serve ---
+    // Hosts (Render, Fly, …) inject the port via $PORT; default to 8080 locally.
+    let port = std::env::var("PORT").unwrap_or_else(|_| DEFAULT_PORT.to_string());
+    let addr = format!("0.0.0.0:{port}");
     let app = build_router(state);
-    let listener = tokio::net::TcpListener::bind(BIND_ADDR)
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .with_context(|| format!("binding {BIND_ADDR}"))?;
-    tracing::info!("Ghost Companion API listening on http://{BIND_ADDR}");
+        .with_context(|| format!("binding {addr}"))?;
+    tracing::info!("Ghost Companion API listening on http://{addr}");
     axum::serve(listener, app).await.context("axum serve")?;
 
     Ok(())

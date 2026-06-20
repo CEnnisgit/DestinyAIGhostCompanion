@@ -1,0 +1,20 @@
+# Keep the build context small: only Cargo manifests, crates/, apps/server, migrations/.
+target/
+.git/
+.github/
+**/.build/
+**/DerivedData/
+apps/ios/
+apps/desktop/
+.venv/
+.venv*/
+**/__pycache__/
+**/node_modules/
+*.db
+*.db-journal
+.env
+.env.*
+logs/
+data/
+archive/
+docs/

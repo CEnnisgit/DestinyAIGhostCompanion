@@ -1,41 +1,37 @@
-# Phase 4A: Local Foundation — multi-stage build for the Rust backend.
+# Production image for the Ghost Companion backend (apps/server).
 #
-# NOTE: the roadmap suggested `rust:1.78-slim`, but the workspace crates use
-# `edition = "2024"`, which requires Rust >= 1.85. We track the latest stable
-# 1.x to stay compatible.
-#
-# The runtime stage runs the `server` binary produced by `apps/server`
-# (Phase 4C). Until that binary target exists, `docker build` is not part of
-# the Phase 4A verification — only `docker compose up` (Postgres) is.
+# The workspace crates use edition 2024 (Rust >= 1.85), so we track the latest
+# stable 1.x rather than the roadmap's 1.78.
 
 # ---- Stage 1: Builder ----
 FROM rust:1-slim-bookworm AS builder
 
-# sqlx / TLS build deps
+# C toolchain + pkg-config for native deps (ring/rustls, bundled libsqlite3-sys).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        pkg-config libssl-dev \
+        build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Copy the workspace manifests and crate sources.
+# Copy the workspace manifests and the crates the server needs.
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY apps ./apps
+COPY apps/server ./apps/server
 COPY migrations ./migrations
 
-RUN cargo build --release
+# Build only the server binary (and its deps), pinned to Cargo.lock.
+RUN cargo build --release --locked -p server
 
 # ---- Stage 2: Runtime ----
 FROM debian:bookworm-slim AS runtime
 
+# CA roots for outbound HTTPS (Bungie / LLM). TLS is rustls, so no OpenSSL needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates libssl3 \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# The server binary lands here once Phase 4C adds the apps/server bin target.
 COPY --from=builder /build/target/release/server /usr/local/bin/server
 
 EXPOSE 8080
