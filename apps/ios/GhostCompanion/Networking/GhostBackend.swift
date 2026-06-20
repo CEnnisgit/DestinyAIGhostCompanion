@@ -34,6 +34,18 @@ struct GhostBackend {
         return try JSONDecoder().decode([CharacterSummary].self, from: data)
     }
 
+    /// `GET /profile/summary?membership_id=...` → the Guardian career dossier.
+    func profileSummary(membershipID: String) async throws -> String {
+        var components = URLComponents(url: baseURL.appendingPathComponent("profile/summary"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "membership_id", value: membershipID)]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw GhostBackendError.badStatus
+        }
+        struct Summary: Decodable { let summary: String }
+        return try JSONDecoder().decode(Summary.self, from: data).summary
+    }
+
     /// Opens the `/ws/voice` WebSocket. `token` (+ optional equip context) is passed
     /// as a query param per the backend's current dev auth seam.
     func voiceSocket(token: String?, membershipID: String?, characterID: String?) -> URLSessionWebSocketTask {

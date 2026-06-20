@@ -62,6 +62,7 @@ interface GhostState {
   membershipId: string | null;
   characters: CharacterSummary[];
   selectedCharacterId: string | null;
+  profileSummary: string | null;
   send: (text: string) => void;
   startConversation: () => void;
   selectConversation: (id: string) => void;
@@ -91,6 +92,7 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   const [membershipId, setMembershipId] = useState<string | null>(() => localStorage.getItem(MEMBER_KEY));
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(() => localStorage.getItem(CHAR_KEY));
+  const [profileSummary, setProfileSummary] = useState<string | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const selectedIdRef = useRef(selectedId);
@@ -152,6 +154,17 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (membershipId) void loadCharacters();
   }, [membershipId, loadCharacters]);
+
+  useEffect(() => {
+    if (!membershipId) {
+      setProfileSummary(null);
+      return;
+    }
+    backend
+      .profileSummary(membershipId)
+      .then(setProfileSummary)
+      .catch(() => setProfileSummary(null));
+  }, [membershipId, backend]);
 
   const updateSelected = useCallback((fn: (c: Conversation) => void) => {
     setConversations((prev) =>
@@ -268,6 +281,7 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     setMembershipId(null);
     setSelectedCharacterId(null);
     setCharacters([]);
+    setProfileSummary(null);
   }, []);
 
   const messages = conversations.find((c) => c.id === selectedId)?.messages ?? [];
@@ -282,6 +296,7 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     membershipId,
     characters,
     selectedCharacterId,
+    profileSummary,
     send,
     startConversation,
     selectConversation,

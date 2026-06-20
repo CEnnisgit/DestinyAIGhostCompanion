@@ -46,7 +46,7 @@ function MessageRow({ message }: { message: ChatMessage }) {
 }
 
 export function ChatView() {
-  const { messages, isAwaiting, send } = useGhost();
+  const { messages, isAwaiting, send, profileSummary } = useGhost();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function ChatView() {
             <div className="empty">
               <GhostMark size={68} glow />
               <h2>Eyes up, Guardian.</h2>
-              <p>Ask me to manage your gear or dig into Destiny lore.</p>
+              <p>{profileSummary ?? "Ask me to manage your gear or dig into Destiny lore."}</p>
               <div className="suggestions">
                 {SUGGESTIONS.map((s) => (
                   <button key={s} className="suggestion" onClick={() => send(s)}>

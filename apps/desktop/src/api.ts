@@ -36,4 +36,11 @@ export class GhostBackend {
     if (!res.ok) throw new Error(`characters request failed (${res.status})`);
     return res.json();
   }
+
+  async profileSummary(membershipId: string): Promise<string> {
+    const res = await fetch(this.url(`/profile/summary?membership_id=${encodeURIComponent(membershipId)}`));
+    if (!res.ok) throw new Error(`profile request failed (${res.status})`);
+    const data = (await res.json()) as { summary: string };
+    return data.summary;
+  }
 }
