@@ -10,14 +10,15 @@ use anyhow::Context;
 use sqlx::postgres::PgPoolOptions;
 
 use api::{
-    build_router, AppState, BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig,
-    CharacterClient, OpenAiClient,
+    build_router, AppState, BungieCareerClient, BungieIdentityClient, BungieInventoryClient,
+    BungieOAuthConfig, CharacterClient, OpenAiClient,
 };
 use db::{
     EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync,
     PostgresTokenStorageAdapter,
 };
 use domain::auth::saga::OAuthSessionSaga;
+use domain::career::saga::GuardianProfileSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
 use domain::voice_ai::personalities::GhostPersonality;
@@ -82,8 +83,16 @@ async fn main() -> anyhow::Result<()> {
     let character_client = Arc::new(CharacterClient::new(
         http.clone(),
         oauth.api_key.clone(),
+        token_storage.clone(),
+    ));
+
+    // --- Career personalization (Phase 5) ---
+    let career_client = Arc::new(BungieCareerClient::new(
+        http.clone(),
+        oauth.api_key.clone(),
         token_storage,
     ));
+    let profile_saga = Arc::new(GuardianProfileSaga::new(career_client));
 
     // --- Lore RAG (Phase 4E) ---
     // Always available: semantic search when embeddings are configured, keyword
@@ -144,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
         equip_saga,
         lore_saga,
         character_client,
+        profile_saga,
         ws_dev_token,
     };
 
