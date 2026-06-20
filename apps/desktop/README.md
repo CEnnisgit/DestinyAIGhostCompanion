@@ -29,12 +29,22 @@ enables permissive CORS so the browser can call it.
 - `src/components/` — Header, Sidebar (history), ChatView, Composer, SettingsModal, GhostMark
 - `src/styles/theme.css` — the Destiny-blue design tokens + layout
 
+## Bungie sign-in (web)
+
+**Settings → Sign in with Bungie** sends the browser to the backend `/auth/login`
+with the app's return URL; the backend round-trips it via OAuth `state` and
+redirects back with `?membership_id=...`, which the app captures. For this to
+work the backend must allowlist the web origin:
+
+```
+GHOST_WEB_CALLBACK=http://localhost:5173,https://your-web-app.example
+```
+
+Once signed in, Settings shows your characters; the selected one is sent to
+`/ws/voice` for equips (same as iOS).
+
 ## Deploy
 
 `npm run build` emits a static `dist/` — host it anywhere (Netlify, Vercel, Render
-static site, an S3 bucket). Point Settings at your deployed backend URL.
-
-## Not yet wired (web)
-
-- Bungie sign-in (the backend redirects OAuth to the iOS scheme; a web callback
-  mode is a follow-up) and the character picker that depends on it.
+static site, an S3 bucket). Point Settings at your deployed backend URL, and add
+that web origin to `GHOST_WEB_CALLBACK` on the backend.

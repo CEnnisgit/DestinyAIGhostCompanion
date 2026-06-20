@@ -435,3 +435,30 @@ body {
 .muted.small {
   font-size: 11px;
 }
+.section-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-top: 8px;
+}
+.char-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.char {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.char.active {
+  border-color: var(--accent);
+}
