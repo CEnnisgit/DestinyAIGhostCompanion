@@ -50,3 +50,4 @@ apps/ios/DerivedData/
 # Node
 node_modules/
 apps/desktop/dist/
+apps/desktop/release/
