@@ -46,3 +46,7 @@ apps/ios/GhostCompanion.xcodeproj/
 apps/ios/build/
 apps/ios/DerivedData/
 **/*.xcuserstate
+
+# Node
+node_modules/
+apps/desktop/dist/
