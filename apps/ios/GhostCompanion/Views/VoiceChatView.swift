@@ -55,7 +55,7 @@ struct VoiceChatView: View {
                 Text("Eyes up, Guardian.")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(GhostTheme.textPrimary)
-                Text("Ask me to manage your gear or dig into Destiny lore.")
+                Text(auth.profileSummary ?? "Ask me to manage your gear or dig into Destiny lore.")
                     .font(.subheadline)
                     .foregroundStyle(GhostTheme.textSecondary)
                     .multilineTextAlignment(.center)

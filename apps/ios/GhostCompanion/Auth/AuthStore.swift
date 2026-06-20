@@ -13,6 +13,7 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
     @Published private(set) var characters: [CharacterSummary] = []
     @Published private(set) var selectedCharacterID: String?
     @Published private(set) var isLoadingCharacters = false
+    @Published private(set) var profileSummary: String?
 
     private let service = "com.cennis.ghostcompanion"
     private let account = "bungie.membership_id"
@@ -42,6 +43,7 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
         } catch {
             errorMessage = error.localizedDescription
         }
+        profileSummary = try? await backend.profileSummary(membershipID: membershipID)
     }
 
     func selectCharacter(_ id: String?) {
@@ -98,6 +100,7 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
         KeychainStore.delete(service: service, account: account)
         membershipID = nil
         characters = []
+        profileSummary = nil
         selectCharacter(nil)
     }
 
