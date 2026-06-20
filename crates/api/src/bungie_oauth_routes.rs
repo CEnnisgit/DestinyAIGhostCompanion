@@ -42,12 +42,23 @@ pub struct BungieOAuthConfig {
     /// membership id so a native app's ASWebAuthenticationSession can complete the
     /// flow. When `None`, the callback returns JSON (web clients).
     pub mobile_callback: Option<String>,
+    /// Allowed origins a browser may be redirected back to after login. The web
+    /// app passes its return URL via `/auth/login?redirect=...`; the callback only
+    /// honors it if it starts with one of these (prevents open redirects).
+    pub web_callbacks: Vec<String>,
 }
 
 impl BungieOAuthConfig {
-    /// Reads `BUNGIE_CLIENT_ID`, `BUNGIE_CLIENT_SECRET`, `BUNGIE_API_KEY`, and the
-    /// optional `GHOST_MOBILE_CALLBACK`.
+    /// Reads `BUNGIE_CLIENT_ID`, `BUNGIE_CLIENT_SECRET`, `BUNGIE_API_KEY`, the optional
+    /// `GHOST_MOBILE_CALLBACK`, and the optional `GHOST_WEB_CALLBACK` allowlist
+    /// (comma-separated origins).
     pub fn from_env() -> Result<Self, anyhow::Error> {
+        let web_callbacks = std::env::var("GHOST_WEB_CALLBACK")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         Ok(Self {
             client_id: std::env::var("BUNGIE_CLIENT_ID")?,
             client_secret: std::env::var("BUNGIE_CLIENT_SECRET")?,
@@ -55,7 +66,13 @@ impl BungieOAuthConfig {
             mobile_callback: std::env::var("GHOST_MOBILE_CALLBACK")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            web_callbacks,
         })
+    }
+
+    /// True when `url` is an allowed web return target (origin allowlisted).
+    fn allows_web(&self, url: &str) -> bool {
+        self.web_callbacks.iter().any(|origin| url.starts_with(origin))
     }
 }
 
@@ -103,22 +120,33 @@ async fn characters(
     Ok(Json(characters))
 }
 
+#[derive(Debug, Deserialize)]
+struct LoginQuery {
+    /// Web SPA return URL; round-tripped via OAuth `state` if allowlisted.
+    redirect: Option<String>,
+}
+
 /// `GET /auth/login` — send the user to Bungie's consent screen.
-async fn login(State(state): State<AppState>) -> Redirect {
-    let url = format!(
+async fn login(State(state): State<AppState>, Query(params): Query<LoginQuery>) -> Redirect {
+    let mut url = format!(
         "{AUTHORIZE_URL}?client_id={}&response_type=code",
         state.oauth.client_id
     );
+    if let Some(redirect) = params.redirect.filter(|r| state.oauth.allows_web(r)) {
+        url.push_str(&format!("&state={}", urlencoding::encode(&redirect)));
+    }
     Redirect::temporary(&url)
 }
 
 #[derive(Debug, Deserialize)]
 struct CallbackQuery {
     code: String,
+    /// Echoed back from `/auth/login` — the web return URL, if any.
+    state: Option<String>,
 }
 
 /// `GET /auth/callback?code=...` — exchange the code and run the login saga.
-/// Redirects to the native app scheme when configured; otherwise returns JSON.
+/// Redirects to the web return URL or the native app scheme; otherwise JSON.
 async fn callback(
     State(state): State<AppState>,
     Query(params): Query<CallbackQuery>,
@@ -126,12 +154,21 @@ async fn callback(
     let token = exchange_code_for_token(&state, &params.code).await?;
     let membership_id = state.auth_saga.process_new_login(token).await?;
 
+    // 1. Web flow: redirect back to the (allowlisted) SPA return URL.
+    if let Some(redirect) = params.state.filter(|r| state.oauth.allows_web(r)) {
+        let sep = if redirect.contains('?') { '&' } else { '?' };
+        let target = format!("{redirect}{sep}membership_id={}", membership_id.0);
+        return Ok(Redirect::to(&target).into_response());
+    }
+
+    // 2. Native flow: redirect to the app URL scheme.
     if let Some(scheme) = &state.oauth.mobile_callback {
         let sep = if scheme.contains('?') { '&' } else { '?' };
         let target = format!("{scheme}{sep}membership_id={}", membership_id.0);
         return Ok(Redirect::to(&target).into_response());
     }
 
+    // 3. Fallback: JSON.
     Ok(Json(json!({ "membership_id": membership_id.0 })).into_response())
 }
 
