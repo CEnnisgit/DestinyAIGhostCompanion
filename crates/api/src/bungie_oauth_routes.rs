@@ -18,11 +18,14 @@ use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::json;
 
+use domain::auth::membership::BungieMembershipId;
 use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::token::BungieOAuthToken;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
 use domain::voice_ai::saga::VoiceCommandSaga;
+
+use crate::bungie_character_client::{CharacterClient, CharacterSummary};
 
 const AUTHORIZE_URL: &str = "https://www.bungie.net/en/OAuth/Authorize";
 const TOKEN_URL: &str = "https://www.bungie.net/Platform/App/OAuth/Token/";
@@ -68,6 +71,8 @@ pub struct AppState {
     pub equip_saga: Arc<EquipItemSaga>,
     /// Lore RAG retrieval; `None` when no embeddings provider is configured.
     pub lore_saga: Option<Arc<LoreSaga>>,
+    /// Lists a signed-in user's characters (equip-target selection).
+    pub character_client: Arc<CharacterClient>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
     /// open locally. TODO: replace with real Bungie-session/JWT validation once
     /// session minting exists (Phase 4B currently returns the membership id only).
@@ -79,7 +84,23 @@ pub fn auth_router(state: AppState) -> Router {
     Router::new()
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
+        .route("/characters", get(characters))
         .with_state(state)
+}
+
+#[derive(Debug, Deserialize)]
+struct CharactersQuery {
+    membership_id: String,
+}
+
+/// `GET /characters?membership_id=...` — the user's Destiny characters.
+async fn characters(
+    State(state): State<AppState>,
+    Query(params): Query<CharactersQuery>,
+) -> Result<Json<Vec<CharacterSummary>>, AppError> {
+    let membership = BungieMembershipId::new(params.membership_id).map_err(|e| anyhow::anyhow!(e))?;
+    let characters = state.character_client.list_characters(&membership).await?;
+    Ok(Json(characters))
 }
 
 /// `GET /auth/login` — send the user to Bungie's consent screen.

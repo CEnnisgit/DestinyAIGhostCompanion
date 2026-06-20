@@ -11,7 +11,7 @@ use sqlx::postgres::PgPoolOptions;
 
 use api::{
     build_router, AppState, BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig,
-    OpenAiClient,
+    CharacterClient, OpenAiClient,
 };
 use db::{
     EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync,
@@ -69,10 +69,15 @@ async fn main() -> anyhow::Result<()> {
     let inventory_client = Arc::new(BungieInventoryClient::new(
         http.clone(),
         oauth.api_key.clone(),
-        token_storage,
+        token_storage.clone(),
     ));
     let manifest_resolver = Arc::new(ManifestItemResolver::new(pool.clone()));
     let equip_saga = Arc::new(EquipItemSaga::new(inventory_client, manifest_resolver));
+    let character_client = Arc::new(CharacterClient::new(
+        http.clone(),
+        oauth.api_key.clone(),
+        token_storage,
+    ));
 
     // --- Lore RAG (Phase 4E) ---
     // Built only when an embeddings provider is configured.
@@ -134,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         voice_saga,
         equip_saga,
         lore_saga,
+        character_client,
         ws_dev_token,
     };
 
