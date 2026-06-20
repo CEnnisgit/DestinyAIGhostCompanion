@@ -102,7 +102,29 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/characters", get(characters))
+        .route("/lore", get(lore))
         .with_state(state)
+}
+
+#[derive(Debug, Deserialize)]
+struct LoreQuery {
+    q: String,
+}
+
+/// `GET /lore?q=...` — direct lore lookup (no LLM intent parsing required).
+/// Works against the curated seed and/or manifest lore via the RAG pipeline.
+async fn lore(
+    State(state): State<AppState>,
+    Query(params): Query<LoreQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Some(lore_saga) = &state.lore_saga else {
+        return Ok(Json(json!({ "topic": params.q, "context": "Lore is not configured." })));
+    };
+    let context = match lore_saga.process_lore_query(&params.q).await {
+        Ok(found) => found,
+        Err(message) => message,
+    };
+    Ok(Json(json!({ "topic": params.q, "context": context })))
 }
 
 #[derive(Debug, Deserialize)]

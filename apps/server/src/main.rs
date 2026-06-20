@@ -51,6 +51,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("running database migrations")?;
 
+    // Seed curated foundational lore so the Ghost knows the essentials out of the box.
+    match db::seed_lore(&pool).await {
+        Ok(entries) => tracing::info!(entries, "seeded curated lore"),
+        Err(err) => tracing::warn!(error = %err, "lore seed failed"),
+    }
+
     // --- Adapters + domain saga ---
     let oauth = BungieOAuthConfig::from_env()
         .context("BUNGIE_CLIENT_ID / BUNGIE_CLIENT_SECRET / BUNGIE_API_KEY must be set")?;
@@ -80,18 +86,16 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // --- Lore RAG (Phase 4E) ---
-    // Built only when an embeddings provider is configured.
-    let lore_saga = match EmbeddingClient::from_env(http.clone()) {
-        Some(embeddings) => {
-            let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
-            tracing::info!("lore RAG enabled");
-            Some(Arc::new(LoreSaga::new(grimoire)))
-        }
-        None => {
-            tracing::warn!("lore RAG disabled — set EMBEDDING_API_KEY/OPENAI_API_KEY to enable");
-            None
-        }
-    };
+    // Always available: semantic search when embeddings are configured, keyword
+    // search otherwise. Backed by the curated seed and/or the manifest lore.
+    let embeddings = EmbeddingClient::from_env(http.clone());
+    if embeddings.is_some() {
+        tracing::info!("lore RAG: semantic (pgvector) search enabled");
+    } else {
+        tracing::info!("lore RAG: keyword search (set EMBEDDING_API_KEY for semantic search)");
+    }
+    let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
+    let lore_saga = Some(Arc::new(LoreSaga::new(grimoire)));
 
     // --- Voice AI (Phase 4C) ---
     // Built only when an LLM is configured; the server still boots without one

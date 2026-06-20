@@ -1,7 +1,9 @@
-//! Phase 4E: pgvector-backed `GrimoireDatabasePort` (ADR-015 semantic lore search).
+//! Phase 4E: `GrimoireDatabasePort` over `destiny_lore`.
 //!
-//! Embeds the topic, finds the nearest lore entries by cosine distance, and
-//! concatenates them into a grounding context string for the `LoreSaga`.
+//! Uses pgvector cosine search (ADR-015) when an embeddings provider is
+//! configured, and always falls back to keyword (ILIKE) search — so the Ghost
+//! can answer lore even with no LLM/embeddings key, against the curated seed
+//! and/or the manifest lore.
 
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -15,21 +17,17 @@ const TOP_K: i64 = 5;
 
 pub struct GrimoireSearch {
     pool: PgPool,
-    embeddings: EmbeddingClient,
+    embeddings: Option<EmbeddingClient>,
 }
 
 impl GrimoireSearch {
-    pub fn new(pool: PgPool, embeddings: EmbeddingClient) -> Self {
+    pub fn new(pool: PgPool, embeddings: Option<EmbeddingClient>) -> Self {
         Self { pool, embeddings }
     }
-}
 
-#[async_trait]
-impl GrimoireDatabasePort for GrimoireSearch {
-    async fn fetch_semantic_lore_context(&self, topic: &str) -> Result<String, anyhow::Error> {
-        let query_vector = pgvector::Vector::from(self.embeddings.embed(topic).await?);
-
-        // `<=>` is cosine distance (pgvector); nearest entries first.
+    /// Cosine nearest-neighbours over embedded lore.
+    async fn semantic(&self, topic: &str, embeddings: &EmbeddingClient) -> Result<Vec<(String, String)>, anyhow::Error> {
+        let query_vector = pgvector::Vector::from(embeddings.embed(topic).await?);
         let rows = sqlx::query(
             r#"
             SELECT name, description
@@ -44,21 +42,49 @@ impl GrimoireDatabasePort for GrimoireSearch {
         .fetch_all(&self.pool)
         .await
         .context("semantic lore search")?;
+        Ok(rows.into_iter().map(|r| (r.get("name"), r.get("description"))).collect())
+    }
 
+    /// Case-insensitive keyword match over name/description (no embeddings needed).
+    async fn keyword(&self, topic: &str) -> Result<Vec<(String, String)>, anyhow::Error> {
+        let like = format!("%{}%", topic.trim());
+        let rows = sqlx::query(
+            r#"
+            SELECT name, description
+            FROM destiny_lore
+            WHERE name ILIKE $1 OR description ILIKE $1
+            ORDER BY (name ILIKE $1) DESC, length(name) ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(&like)
+        .bind(TOP_K)
+        .fetch_all(&self.pool)
+        .await
+        .context("keyword lore search")?;
+        Ok(rows.into_iter().map(|r| (r.get("name"), r.get("description"))).collect())
+    }
+}
+
+#[async_trait]
+impl GrimoireDatabasePort for GrimoireSearch {
+    async fn fetch_semantic_lore_context(&self, topic: &str) -> Result<String, anyhow::Error> {
+        let mut rows = match &self.embeddings {
+            Some(embeddings) => self.semantic(topic, embeddings).await?,
+            None => Vec::new(),
+        };
         if rows.is_empty() {
-            return Err(anyhow!("no embedded lore entries matched '{topic}'"));
+            rows = self.keyword(topic).await?;
+        }
+        if rows.is_empty() {
+            return Err(anyhow!("no lore matched '{topic}'"));
         }
 
         let context = rows
             .iter()
-            .map(|row| {
-                let name: String = row.get("name");
-                let description: String = row.get("description");
-                format!("{name}: {description}")
-            })
+            .map(|(name, description)| format!("{name}: {description}"))
             .collect::<Vec<_>>()
             .join("\n\n");
-
         Ok(context)
     }
 }
