@@ -142,7 +142,7 @@ struct VoiceChatView: View {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         if session.connection != .connected {
-            session.connectVoice(membershipID: auth.membershipID)
+            session.connectVoice(membershipID: auth.membershipID, characterID: auth.selectedCharacterID)
         }
         session.send(trimmed)
     }

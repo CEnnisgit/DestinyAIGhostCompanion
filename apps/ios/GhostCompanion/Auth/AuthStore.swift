@@ -10,18 +10,48 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
     @Published private(set) var membershipID: String?
     @Published private(set) var isAuthenticating = false
     @Published var errorMessage: String?
+    @Published private(set) var characters: [CharacterSummary] = []
+    @Published private(set) var selectedCharacterID: String?
+    @Published private(set) var isLoadingCharacters = false
 
     private let service = "com.cennis.ghostcompanion"
     private let account = "bungie.membership_id"
+    private let characterKey = "ghost.character_id"
     private let callbackScheme = "ghostcompanion"
     private var session: ASWebAuthenticationSession?
 
     override init() {
         super.init()
         membershipID = KeychainStore.load(service: service, account: account)
+        selectedCharacterID = UserDefaults.standard.string(forKey: characterKey)
     }
 
     var isSignedIn: Bool { membershipID != nil }
+
+    /// Loads the user's characters from the backend (after sign-in).
+    func loadCharacters(backendURLString: String) async {
+        guard let membershipID, let backend = GhostBackend(baseURLString: backendURLString) else { return }
+        isLoadingCharacters = true
+        defer { isLoadingCharacters = false }
+        do {
+            let result = try await backend.characters(membershipID: membershipID)
+            characters = result
+            if selectedCharacterID == nil || !result.contains(where: { $0.characterId == selectedCharacterID }) {
+                selectCharacter(result.first?.characterId)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func selectCharacter(_ id: String?) {
+        selectedCharacterID = id
+        if let id {
+            UserDefaults.standard.set(id, forKey: characterKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: characterKey)
+        }
+    }
 
     func signIn(backendURLString: String) {
         guard let backend = GhostBackend(baseURLString: backendURLString) else {
@@ -67,6 +97,8 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
     func signOut() {
         KeychainStore.delete(service: service, account: account)
         membershipID = nil
+        characters = []
+        selectCharacter(nil)
     }
 
     // MARK: - ASWebAuthenticationPresentationContextProviding
