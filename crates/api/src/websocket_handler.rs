@@ -20,6 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use domain::auth::membership::BungieMembershipId;
+use domain::career::saga::GuardianProfileSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
 use domain::voice_ai::intent::VoiceIntent;
@@ -76,8 +77,9 @@ async fn voice_ws_handler(
         Some(saga) => {
             let equip_saga = state.equip_saga.clone();
             let lore_saga = state.lore_saga.clone();
+            let profile_saga = state.profile_saga.clone();
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, saga, equip_saga, lore_saga, equip_ctx)
+                handle_socket(socket, saga, equip_saga, lore_saga, profile_saga, equip_ctx)
             })
         }
         None => (
@@ -102,8 +104,23 @@ async fn handle_socket(
     saga: Arc<VoiceCommandSaga>,
     equip_saga: Arc<EquipItemSaga>,
     lore_saga: Option<Arc<LoreSaga>>,
+    profile_saga: Arc<GuardianProfileSaga>,
     equip_ctx: Option<EquipContext>,
 ) {
+    // For a signed-in user, fetch the career dossier: greet them and use it to
+    // personalize every reply.
+    let guardian_context: Option<String> = match &equip_ctx {
+        Some(ctx) => match profile_saga.summarize(&ctx.membership_id).await {
+            Ok(dossier) => {
+                let greeting = json!({ "response": dossier, "intent": "greeting" }).to_string();
+                let _ = socket.send(Message::Text(greeting)).await;
+                Some(dossier)
+            }
+            Err(_) => None,
+        },
+        None => None,
+    };
+
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             Message::Text(text) => {
@@ -111,6 +128,7 @@ async fn handle_socket(
                     &saga,
                     &equip_saga,
                     lore_saga.as_deref(),
+                    guardian_context.as_deref(),
                     equip_ctx.as_ref(),
                     &text,
                 )
@@ -135,6 +153,7 @@ async fn process_text(
     saga: &VoiceCommandSaga,
     equip_saga: &EquipItemSaga,
     lore_saga: Option<&LoreSaga>,
+    guardian_context: Option<&str>,
     equip_ctx: Option<&EquipContext>,
     raw: &str,
 ) -> String {
@@ -146,7 +165,10 @@ async fn process_text(
         .to_string();
     };
 
-    match saga.process_voice_command(&inbound.text).await {
+    match saga
+        .process_voice_command_with_context(&inbound.text, guardian_context)
+        .await
+    {
         Ok(intent) => {
             // Execute equips for real when we have an authenticated context;
             // otherwise (and for not-yet-wired intents) acknowledge.

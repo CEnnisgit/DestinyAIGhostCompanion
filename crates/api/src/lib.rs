@@ -1,6 +1,7 @@
 //! `api` crate — inbound (axum) + outbound (reqwest) adapters for the Ghost
 //! Companion domain. The runnable composition root lives in `apps/server`.
 
+pub mod bungie_career_client;
 pub mod bungie_character_client;
 pub mod bungie_identity_client;
 pub mod bungie_inventory_client;
@@ -9,6 +10,7 @@ pub mod openai_client;
 pub mod websocket_handler;
 
 pub use bungie_character_client::CharacterClient;
+pub use bungie_career_client::BungieCareerClient;
 pub use bungie_identity_client::BungieIdentityClient;
 pub use bungie_inventory_client::BungieInventoryClient;
 pub use bungie_oauth_routes::{auth_router, AppState, BungieOAuthConfig};

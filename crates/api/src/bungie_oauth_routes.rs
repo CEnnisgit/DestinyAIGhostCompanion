@@ -21,6 +21,7 @@ use serde_json::json;
 use domain::auth::membership::BungieMembershipId;
 use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::token::BungieOAuthToken;
+use domain::career::saga::GuardianProfileSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
 use domain::voice_ai::saga::VoiceCommandSaga;
@@ -90,6 +91,8 @@ pub struct AppState {
     pub lore_saga: Option<Arc<LoreSaga>>,
     /// Lists a signed-in user's characters (equip-target selection).
     pub character_client: Arc<CharacterClient>,
+    /// Builds a Guardian's career dossier for personalization.
+    pub profile_saga: Arc<GuardianProfileSaga>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
     /// open locally. TODO: replace with real Bungie-session/JWT validation once
     /// session minting exists (Phase 4B currently returns the membership id only).
@@ -102,8 +105,27 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/characters", get(characters))
+        .route("/profile/summary", get(profile_summary))
         .route("/lore", get(lore))
         .with_state(state)
+}
+
+#[derive(Debug, Deserialize)]
+struct MembershipQuery {
+    membership_id: String,
+}
+
+/// `GET /profile/summary?membership_id=...` — the Guardian career dossier.
+async fn profile_summary(
+    State(state): State<AppState>,
+    Query(params): Query<MembershipQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let membership = BungieMembershipId::new(params.membership_id).map_err(|e| anyhow::anyhow!(e))?;
+    let summary = match state.profile_saga.summarize(&membership).await {
+        Ok(dossier) => dossier,
+        Err(message) => message,
+    };
+    Ok(Json(json!({ "summary": summary })))
 }
 
 #[derive(Debug, Deserialize)]

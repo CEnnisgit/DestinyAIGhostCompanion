@@ -27,15 +27,31 @@ impl VoiceCommandSaga {
     /// Takes the raw transcribed text from the user's microphone.
     /// Safely attempts cloud translation, then falls back to local translation on failure.
     pub async fn process_voice_command(&self, raw_text: &str) -> Result<VoiceIntent, anyhow::Error> {
-        let system_prompt = self.personality.system_prompt();
+        self.process_voice_command_with_context(raw_text, None).await
+    }
+
+    /// Like `process_voice_command`, but injects an optional Guardian career
+    /// dossier into the system prompt so the Ghost personalizes to the player.
+    pub async fn process_voice_command_with_context(
+        &self,
+        raw_text: &str,
+        guardian_context: Option<&str>,
+    ) -> Result<VoiceIntent, anyhow::Error> {
+        let base = self.personality.system_prompt();
+        let system_prompt = match guardian_context {
+            Some(ctx) if !ctx.trim().is_empty() => {
+                format!("{base}\n\nGuardian context (use to personalize your tone): {ctx}")
+            }
+            _ => base.to_string(),
+        };
 
         // 1. Attempt the primary LLM
-        match self.primary_ai.interpret_command(system_prompt, raw_text).await {
+        match self.primary_ai.interpret_command(&system_prompt, raw_text).await {
             Ok(intent) => Ok(intent),
             Err(primary_err) => {
                 // 2. Automatic Failover Circuit (ADR 008)
                 if let Some(ref fallback) = self.fallback_ai {
-                    match fallback.interpret_command(system_prompt, raw_text).await {
+                    match fallback.interpret_command(&system_prompt, raw_text).await {
                         Ok(intent) => Ok(intent),
                         Err(fallback_err) => {
                             Err(anyhow::anyhow!("CRITICAL: Both primary ({}) and fallback ({}) AI ports failed.", primary_err, fallback_err))
