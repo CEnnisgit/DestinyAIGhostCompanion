@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { GhostBackend } from "./api";
+import { GhostBackend, type CharacterSummary } from "./api";
 
 export type Role = "guardian" | "ghost";
 export interface ChatMessage {
@@ -27,6 +27,8 @@ export type Health = "unknown" | "checking" | "ok" | "offline";
 
 const STORE_KEY = "ghost.conversations";
 const URL_KEY = "ghost.backendURL";
+const MEMBER_KEY = "ghost.membershipId";
+const CHAR_KEY = "ghost.characterId";
 const DEFAULT_URL = "http://localhost:8080";
 
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -57,12 +59,18 @@ interface GhostState {
   health: Health;
   isAwaiting: boolean;
   backendURL: string;
+  membershipId: string | null;
+  characters: CharacterSummary[];
+  selectedCharacterId: string | null;
   send: (text: string) => void;
   startConversation: () => void;
   selectConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
   setBackendURL: (url: string) => void;
   checkHealth: () => void;
+  signIn: () => void;
+  signOut: () => void;
+  selectCharacter: (id: string) => void;
 }
 
 const GhostContext = createContext<GhostState | null>(null);
@@ -79,13 +87,18 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   const [selectedId, setSelectedId] = useState<string>(initial[0].id);
   const [health, setHealth] = useState<Health>("unknown");
   const [isAwaiting, setIsAwaiting] = useState(false);
-  const [backendURL, setBackendURLState] = useState<string>(
-    () => localStorage.getItem(URL_KEY) ?? DEFAULT_URL,
-  );
+  const [backendURL, setBackendURLState] = useState<string>(() => localStorage.getItem(URL_KEY) ?? DEFAULT_URL);
+  const [membershipId, setMembershipId] = useState<string | null>(() => localStorage.getItem(MEMBER_KEY));
+  const [characters, setCharacters] = useState<CharacterSummary[]>([]);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(() => localStorage.getItem(CHAR_KEY));
 
   const socketRef = useRef<WebSocket | null>(null);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
+  const membershipRef = useRef(membershipId);
+  membershipRef.current = membershipId;
+  const characterRef = useRef(selectedCharacterId);
+  characterRef.current = selectedCharacterId;
 
   const backend = useMemo(() => new GhostBackend(backendURL), [backendURL]);
 
@@ -93,16 +106,16 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORE_KEY, JSON.stringify(conversations));
   }, [conversations]);
 
-  const updateSelected = useCallback((fn: (c: Conversation) => void) => {
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id !== selectedIdRef.current) return c;
-        const copy = { ...c, messages: [...c.messages] };
-        fn(copy);
-        copy.updatedAt = Date.now();
-        return copy;
-      }),
-    );
+  // Capture ?membership_id=... after an OAuth web redirect, then clean the URL.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const mid = url.searchParams.get("membership_id");
+    if (mid) {
+      localStorage.setItem(MEMBER_KEY, mid);
+      setMembershipId(mid);
+      url.searchParams.delete("membership_id");
+      window.history.replaceState({}, "", url.pathname + url.search);
+    }
   }, []);
 
   const checkHealth = useCallback(() => {
@@ -116,6 +129,41 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     checkHealth();
   }, [checkHealth]);
+
+  const selectCharacter = useCallback((id: string) => {
+    localStorage.setItem(CHAR_KEY, id);
+    setSelectedCharacterId(id);
+  }, []);
+
+  const loadCharacters = useCallback(async () => {
+    const mid = membershipRef.current;
+    if (!mid) return;
+    try {
+      const result = await backend.characters(mid);
+      setCharacters(result);
+      if (result.length && !result.some((c) => c.characterId === characterRef.current)) {
+        selectCharacter(result[0].characterId);
+      }
+    } catch {
+      /* not signed in / backend unreachable */
+    }
+  }, [backend, selectCharacter]);
+
+  useEffect(() => {
+    if (membershipId) void loadCharacters();
+  }, [membershipId, loadCharacters]);
+
+  const updateSelected = useCallback((fn: (c: Conversation) => void) => {
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id !== selectedIdRef.current) return c;
+        const copy = { ...c, messages: [...c.messages] };
+        fn(copy);
+        copy.updatedAt = Date.now();
+        return copy;
+      }),
+    );
+  }, []);
 
   const handleInbound = useCallback(
     (raw: string) => {
@@ -137,7 +185,12 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   const ensureSocket = useCallback((): WebSocket => {
     const existing = socketRef.current;
     if (existing && existing.readyState <= WebSocket.OPEN) return existing;
-    const ws = new WebSocket(backend.voiceSocketURL());
+    const ws = new WebSocket(
+      backend.voiceSocketURL({
+        membershipId: membershipRef.current ?? undefined,
+        characterId: characterRef.current ?? undefined,
+      }),
+    );
     ws.onmessage = (e) => handleInbound(typeof e.data === "string" ? e.data : "");
     ws.onerror = () => setIsAwaiting(false);
     ws.onclose = () => {
@@ -203,6 +256,20 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     socketRef.current = null;
   }, []);
 
+  const signIn = useCallback(() => {
+    const loginUrl = new URL(backend.loginURL());
+    loginUrl.searchParams.set("redirect", window.location.origin + window.location.pathname);
+    window.location.href = loginUrl.toString();
+  }, [backend]);
+
+  const signOut = useCallback(() => {
+    localStorage.removeItem(MEMBER_KEY);
+    localStorage.removeItem(CHAR_KEY);
+    setMembershipId(null);
+    setSelectedCharacterId(null);
+    setCharacters([]);
+  }, []);
+
   const messages = conversations.find((c) => c.id === selectedId)?.messages ?? [];
 
   const value: GhostState = {
@@ -212,12 +279,18 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     health,
     isAwaiting,
     backendURL,
+    membershipId,
+    characters,
+    selectedCharacterId,
     send,
     startConversation,
     selectConversation,
     deleteConversation,
     setBackendURL,
     checkHealth,
+    signIn,
+    signOut,
+    selectCharacter,
   };
 
   return <GhostContext.Provider value={value}>{children}</GhostContext.Provider>;
