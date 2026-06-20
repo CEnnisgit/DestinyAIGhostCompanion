@@ -27,6 +27,37 @@ struct SettingsView: View {
                     }
                 }
 
+                if auth.isSignedIn {
+                    Section("Active Character") {
+                        if auth.isLoadingCharacters {
+                            HStack { ProgressView(); Text("Loading characters…") }
+                        } else if auth.characters.isEmpty {
+                            Button("Load Characters") {
+                                Task { await auth.loadCharacters(backendURLString: session.backendURLString) }
+                            }
+                        } else {
+                            ForEach(auth.characters) { character in
+                                Button { auth.selectCharacter(character.characterId) } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(character.className)
+                                                .foregroundStyle(GhostTheme.textPrimary)
+                                            Text("◇ \(character.light)")
+                                                .font(.caption)
+                                                .foregroundStyle(GhostTheme.textSecondary)
+                                        }
+                                        Spacer()
+                                        if character.characterId == auth.selectedCharacterID {
+                                            Image(systemName: "checkmark")
+                                                .foregroundStyle(GhostTheme.accent)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Section("Backend") {
                     TextField("Base URL", text: $urlDraft)
                         .textInputAutocapitalization(.never)
@@ -60,6 +91,11 @@ struct SettingsView: View {
             .tint(GhostTheme.accent)
             .preferredColorScheme(.dark)
             .onAppear { urlDraft = session.backendURLString }
+            .task {
+                if auth.isSignedIn && auth.characters.isEmpty {
+                    await auth.loadCharacters(backendURLString: session.backendURLString)
+                }
+            }
         }
     }
 }

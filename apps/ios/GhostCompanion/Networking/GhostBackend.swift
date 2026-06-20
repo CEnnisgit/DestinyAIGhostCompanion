@@ -23,6 +23,17 @@ struct GhostBackend {
     /// The backend URL that begins the Bungie OAuth flow.
     var loginURL: URL { baseURL.appendingPathComponent("auth/login") }
 
+    /// `GET /characters?membership_id=...` → the signed-in user's characters.
+    func characters(membershipID: String) async throws -> [CharacterSummary] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("characters"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "membership_id", value: membershipID)]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw GhostBackendError.badStatus
+        }
+        return try JSONDecoder().decode([CharacterSummary].self, from: data)
+    }
+
     /// Opens the `/ws/voice` WebSocket. `token` (+ optional equip context) is passed
     /// as a query param per the backend's current dev auth seam.
     func voiceSocket(token: String?, membershipID: String?, characterID: String?) -> URLSessionWebSocketTask {
