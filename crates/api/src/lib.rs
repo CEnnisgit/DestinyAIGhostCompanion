@@ -15,11 +15,14 @@ pub use bungie_oauth_routes::{auth_router, AppState, BungieOAuthConfig};
 pub use openai_client::OpenAiClient;
 
 use axum::{routing::get, Router};
+use tower_http::cors::CorsLayer;
 
 /// Builds the full router: health check, Bungie auth routes, and the voice WebSocket.
+/// A permissive CORS layer lets the browser web client (a different origin) call the API.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .merge(auth_router(state.clone()))
         .merge(websocket_handler::voice_ws_router(state))
+        .layer(CorsLayer::permissive())
 }
