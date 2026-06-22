@@ -90,6 +90,9 @@ export function LoreCodex({ onClose }: { onClose: () => void }) {
                 <div className="lore-entry-head">
                   <span className="lore-name">{e.name}</span>
                   {e.category && <span className="lore-cat">{e.category}</span>}
+                  {e.source && e.source !== "curated" && (
+                    <span className="lore-src">{e.source === "bungie" ? "OFFICIAL" : e.source.toUpperCase()}</span>
+                  )}
                 </div>
                 <p className="lore-desc">{e.description}</p>
               </div>

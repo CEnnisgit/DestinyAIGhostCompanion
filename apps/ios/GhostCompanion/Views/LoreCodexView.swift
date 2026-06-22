@@ -73,6 +73,14 @@ struct LoreCodexView: View {
                             .font(GhostTheme.hud(9))
                             .foregroundStyle(GhostTheme.textSecondary)
                     }
+                    if let badge = entry.sourceBadge {
+                        Text(badge)
+                            .font(GhostTheme.hud(8))
+                            .foregroundStyle(GhostTheme.accent)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .overlay(Capsule().stroke(GhostTheme.accentHairline, lineWidth: 1))
+                    }
                 }
                 Text(entry.description).font(.subheadline).foregroundStyle(GhostTheme.textPrimary)
             }
