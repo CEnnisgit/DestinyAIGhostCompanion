@@ -42,6 +42,9 @@ struct RawActivity {
     period: String,
     completed: bool,
     game: Game,
+    /// Name resolved inline (e.g. from a D1 `definitions` block); `None` means
+    /// the caller must resolve it (D2, via the manifest entity endpoint).
+    name: Option<String>,
 }
 
 impl BungieActivityClient {
@@ -165,16 +168,20 @@ impl ActivityHistoryPort for BungieActivityClient {
         let mut name_cache: HashMap<i64, Option<String>> = HashMap::new();
         let mut records: Vec<ActivityRecord> = Vec::new();
         for (idx, item) in raw.into_iter().enumerate() {
-            let name = if item.game == Game::Destiny2 {
+            // Prefer a name already inlined by the response (D1 definitions);
+            // otherwise resolve D2 hashes via the manifest entity endpoint.
+            let resolved = if let Some(name) = &item.name {
+                Some(name.clone())
+            } else if item.game == Game::Destiny2 {
                 if !name_cache.contains_key(&item.reference_hash) {
-                    let resolved = self.activity_name(access, item.reference_hash).await;
-                    name_cache.insert(item.reference_hash, resolved);
+                    let looked_up = self.activity_name(access, item.reference_hash).await;
+                    name_cache.insert(item.reference_hash, looked_up);
                 }
                 name_cache.get(&item.reference_hash).cloned().flatten()
             } else {
                 None
             };
-            let name = name.unwrap_or_else(|| item.mode.clone());
+            let name = resolved.unwrap_or_else(|| item.mode.clone());
 
             let fireteam = if idx < FIRETEAM_LOOKUPS && item.game == Game::Destiny2 {
                 self.fireteam(access, &item.instance_id, &membership_id.0).await
@@ -224,8 +231,10 @@ impl BungieActivityClient {
                 else {
                     continue;
                 };
+                // `definitions=true` inlines activity names so D1 records read
+                // "King's Fall" rather than just the mode label.
                 let url = format!(
-                    "{D1_BASE}/Destiny/Stats/ActivityHistory/{membership_type}/{membership_id}/{char_id}/?count=10&mode=0"
+                    "{D1_BASE}/Destiny/Stats/ActivityHistory/{membership_type}/{membership_id}/{char_id}/?count=10&mode=0&definitions=true"
                 );
                 if let Ok(body) = self.get(access, &url).await {
                     out.extend(parse_activity_history(&body, Game::Destiny1));
@@ -295,6 +304,16 @@ fn parse_activity_history(body: &Value, game: Game) -> Vec<RawActivity> {
         if period.is_empty() {
             continue;
         }
+        // D1 responses can inline activity names under Response.definitions.
+        let name = body
+            .pointer("/Response/definitions/activities")
+            .and_then(Value::as_object)
+            .and_then(|defs| defs.get(&reference_hash.to_string()))
+            .and_then(|d| d.get("activityName"))
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         out.push(RawActivity {
             instance_id,
             reference_hash,
@@ -302,6 +321,7 @@ fn parse_activity_history(body: &Value, game: Game) -> Vec<RawActivity> {
             period,
             completed,
             game,
+            name,
         });
     }
     out
@@ -394,8 +414,30 @@ mod tests {
         assert_eq!(raw[0].reference_hash, 99887766);
         assert_eq!(raw[0].mode, "Raid");
         assert!(raw[0].completed);
+        assert_eq!(raw[0].name, None); // D2 resolves names later via the manifest
         assert_eq!(raw[1].mode, "Crucible");
         assert!(!raw[1].completed);
+    }
+
+    #[test]
+    fn parses_d1_inlined_activity_names() {
+        // D1 with definitions=true inlines names under Response.definitions.activities.
+        let body = json!({ "Response": {
+            "activities": [
+                {
+                    "period": "2016-05-01T12:00:00Z",
+                    "activityDetails": { "instanceId": "777", "referenceId": 1733556769, "mode": 4 },
+                    "values": { "completed": { "basic": { "value": 1.0 } } }
+                }
+            ],
+            "definitions": { "activities": {
+                "1733556769": { "activityName": "King's Fall", "activityDescription": "Reach the Dreadnaught's core." }
+            }}
+        }});
+        let raw = parse_activity_history(&body, Game::Destiny1);
+        assert_eq!(raw.len(), 1);
+        assert_eq!(raw[0].name.as_deref(), Some("King's Fall"));
+        assert_eq!(raw[0].game, Game::Destiny1);
     }
 
     #[test]

@@ -96,6 +96,8 @@ pub struct AppState {
     pub character_client: Arc<CharacterClient>,
     /// Builds a Guardian's career dossier for personalization.
     pub profile_saga: Arc<GuardianProfileSaga>,
+    /// Generic authenticated Bungie read passthrough (any Platform GET).
+    pub bungie_api: Arc<crate::bungie_api_client::BungieApiClient>,
     /// Read access to the lore corpus for the browsable Codex.
     pub lore_library: Arc<db::LoreLibrary>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
@@ -112,6 +114,7 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/characters", get(characters))
         .route("/profile/summary", get(profile_summary))
         .route("/activity/summary", get(activity_summary))
+        .route("/bungie", get(bungie_passthrough))
         .route("/chat", axum::routing::post(chat))
         .route("/lore", get(lore))
         .route("/lore/categories", get(lore_categories))
@@ -194,6 +197,32 @@ async fn activity_summary(
         "narrative": summary.narrative(),
         "recent": summary.recent,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+struct BungiePassthroughQuery {
+    /// A Bungie Platform path, e.g. `/Platform/Destiny2/3/Profile/123/?components=200,900`.
+    path: String,
+    /// When present, the Guardian's OAuth token is attached for authed components.
+    membership_id: Option<String>,
+}
+
+/// `GET /bungie?path=...&membership_id=...` — generic read passthrough to any
+/// Bungie Platform endpoint (D2 + D1). Read-only and path-allowlisted. This lets
+/// the Ghost reach any game data the Guardian is authorized for without a
+/// bespoke route per endpoint.
+async fn bungie_passthrough(
+    State(state): State<AppState>,
+    Query(params): Query<BungiePassthroughQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let membership = match params.membership_id.as_deref() {
+        Some(id) if !id.trim().is_empty() => Some(
+            BungieMembershipId::new(id.to_string()).map_err(|e| anyhow::anyhow!(e))?,
+        ),
+        _ => None,
+    };
+    let body = state.bungie_api.get(membership.as_ref(), &params.path).await?;
+    Ok(Json(body))
 }
 
 #[derive(Debug, Deserialize)]
