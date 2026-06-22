@@ -80,6 +80,7 @@ async fn voice_ws_handler(
             let lore_saga = state.lore_saga.clone();
             let profile_saga = state.profile_saga.clone();
             let conversation_saga = state.conversation_saga.clone();
+            let bungie_api = state.bungie_api.clone();
             ws.on_upgrade(move |socket| {
                 handle_socket(
                     socket,
@@ -88,6 +89,7 @@ async fn voice_ws_handler(
                     equip_saga,
                     lore_saga,
                     profile_saga,
+                    bungie_api,
                     equip_ctx,
                 )
             })
@@ -117,6 +119,7 @@ async fn handle_socket(
     equip_saga: Arc<EquipItemSaga>,
     lore_saga: Option<Arc<LoreSaga>>,
     profile_saga: Arc<GuardianProfileSaga>,
+    bungie_api: Arc<crate::bungie_api_client::BungieApiClient>,
     equip_ctx: Option<EquipContext>,
 ) {
     // For a signed-in user, fetch the full dossier (career stats + recent
@@ -141,6 +144,7 @@ async fn handle_socket(
                     conversation_saga.as_deref(),
                     &equip_saga,
                     lore_saga.as_deref(),
+                    &bungie_api,
                     guardian_context.as_deref(),
                     equip_ctx.as_ref(),
                     &text,
@@ -168,6 +172,7 @@ async fn process_text(
     conversation_saga: Option<&ConversationSaga>,
     equip_saga: &EquipItemSaga,
     lore_saga: Option<&LoreSaga>,
+    bungie_api: &Arc<crate::bungie_api_client::BungieApiClient>,
     guardian_context: Option<&str>,
     equip_ctx: Option<&EquipContext>,
     raw: &str,
@@ -200,11 +205,19 @@ async fn process_text(
 
             // Conversational intents (lore questions, open chat) get a free-form,
             // grounded reply from the Ghost when an LLM is configured: anchored in
-            // retrieved lore AND the Guardian's own career/activity dossier.
+            // retrieved lore, the Guardian's career/activity dossier, AND live
+            // Bungie reads the Ghost can perform on demand (tool-calling).
             if let (VoiceIntent::Lore { .. } | VoiceIntent::Unknown { .. }, Some(chat)) =
                 (&intent, conversation_saga)
             {
-                match chat.converse(&inbound.text, guardian_context).await {
+                let executor = crate::bungie_api_client::BungieToolExecutor::new(
+                    bungie_api.clone(),
+                    equip_ctx.map(|c| c.membership_id.clone()),
+                );
+                match chat
+                    .converse_with_tools(&inbound.text, guardian_context, Some(&executor))
+                    .await
+                {
                     Ok(reply) => {
                         return json!({ "response": reply, "intent": "conversation" }).to_string()
                     }

@@ -14,10 +14,15 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
+use async_trait::async_trait;
 use serde_json::Value;
 
 use domain::auth::membership::BungieMembershipId;
 use domain::auth::ports::TokenStoragePort;
+use domain::voice_ai::tools::{ToolCall, ToolExecutor, ToolSpec};
+
+/// Cap tool-result size so a big Bungie payload can't blow the model's context.
+const TOOL_RESULT_BUDGET: usize = 6000;
 
 const BUNGIE_ROOT: &str = "https://www.bungie.net";
 /// Path prefixes we permit (keeps this from being a generic open proxy).
@@ -82,6 +87,69 @@ impl BungieApiClient {
             }
         }
         Ok(body)
+    }
+}
+
+/// Binds a [`BungieApiClient`] to one Guardian and exposes it to the LLM as a
+/// `bungie_get` tool, so the Ghost can fetch any game data the player is
+/// authorized for, mid-conversation.
+pub struct BungieToolExecutor {
+    client: Arc<BungieApiClient>,
+    membership_id: Option<BungieMembershipId>,
+}
+
+impl BungieToolExecutor {
+    pub fn new(client: Arc<BungieApiClient>, membership_id: Option<BungieMembershipId>) -> Self {
+        Self {
+            client,
+            membership_id,
+        }
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for BungieToolExecutor {
+    fn specs(&self) -> Vec<ToolSpec> {
+        vec![ToolSpec {
+            name: "bungie_get".to_string(),
+            description: "Fetch live Destiny data by performing an authenticated GET against a \
+                Bungie Platform path. Use this to answer questions about the Guardian's \
+                characters, inventory, triumphs, activity history, fireteams, vendors, clan, \
+                or any other game data. Destiny 2 paths start with /Platform/Destiny2/... and \
+                Destiny 1 paths start with /d1/Platform/Destiny/... . Example: \
+                /Platform/Destiny2/{membershipType}/Profile/{destinyMembershipId}/?components=200,900"
+                .to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "The Bungie Platform path (with query string) to GET."
+                    }
+                },
+                "required": ["path"]
+            }),
+        }]
+    }
+
+    async fn run(&self, call: &ToolCall) -> Result<String, anyhow::Error> {
+        if call.name != "bungie_get" {
+            return Err(anyhow!("unknown tool: {}", call.name));
+        }
+        let args: Value = serde_json::from_str(&call.arguments)
+            .with_context(|| format!("bad tool arguments: {}", call.arguments))?;
+        let path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("bungie_get requires a 'path' string"))?;
+
+        let body = self.client.get(self.membership_id.as_ref(), path).await?;
+        let mut text = body.to_string();
+        if text.len() > TOOL_RESULT_BUDGET {
+            text.truncate(TOOL_RESULT_BUDGET);
+            text.push_str("…(truncated)");
+        }
+        Ok(text)
     }
 }
 

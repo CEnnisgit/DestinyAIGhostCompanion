@@ -246,16 +246,28 @@ async fn chat(
         })));
     };
 
-    // Pull the Guardian's career + activity context when we know who they are.
-    let context: Option<String> = match req.membership_id.as_deref() {
-        Some(id) if !id.trim().is_empty() => match BungieMembershipId::new(id.to_string()) {
-            Ok(membership) => state.profile_saga.full_context(&membership).await,
-            Err(_) => None,
-        },
-        _ => None,
+    // Resolve the Guardian once: used for both the dossier context and to bind
+    // the live-data tool so the Ghost can read their game data on demand.
+    let membership = req
+        .membership_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .and_then(|id| BungieMembershipId::new(id.to_string()).ok());
+
+    let context: Option<String> = match &membership {
+        Some(m) => state.profile_saga.full_context(m).await,
+        None => None,
     };
 
-    let reply = match conversation.converse(&req.message, context.as_deref()).await {
+    let executor = crate::bungie_api_client::BungieToolExecutor::new(
+        state.bungie_api.clone(),
+        membership,
+    );
+
+    let reply = match conversation
+        .converse_with_tools(&req.message, context.as_deref(), Some(&executor))
+        .await
+    {
         Ok(reply) => reply,
         Err(_) => "The Ghost faltered reaching for an answer. Try again in a moment.".to_string(),
     };

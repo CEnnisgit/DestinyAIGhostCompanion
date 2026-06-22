@@ -15,6 +15,10 @@ use std::sync::Arc;
 use crate::lore::ports::GrimoireDatabasePort;
 use crate::voice_ai::personalities::GhostPersonality;
 use crate::voice_ai::ports::GenerativeAiPort;
+use crate::voice_ai::tools::{AiTurn, ConversationItem, ToolExecutor};
+
+/// Safety bound on tool-call rounds per message (prevents loops / runaway cost).
+const MAX_TOOL_ROUNDS: usize = 4;
 
 /// Orchestrates an open conversation between the Guardian and their Ghost.
 pub struct ConversationSaga {
@@ -46,8 +50,73 @@ impl ConversationSaga {
         message: &str,
         guardian_context: Option<&str>,
     ) -> Result<String, anyhow::Error> {
+        self.converse_with_tools(message, guardian_context, None)
+            .await
+    }
+
+    /// Like [`Self::converse`], but when a [`ToolExecutor`] is supplied the Ghost
+    /// may call tools (e.g. live Bungie reads) mid-answer, so it can fetch
+    /// whatever game data the question needs and ground the reply in it.
+    pub async fn converse_with_tools(
+        &self,
+        message: &str,
+        guardian_context: Option<&str>,
+        tools: Option<&dyn ToolExecutor>,
+    ) -> Result<String, anyhow::Error> {
         let system_prompt = self.build_system_prompt(message, guardian_context).await;
-        self.ai.converse(&system_prompt, message).await
+        match tools {
+            Some(executor) => self.run_tool_loop(&system_prompt, message, executor).await,
+            None => self.ai.converse(&system_prompt, message).await,
+        }
+    }
+
+    /// Drives the model ↔ tool loop until it produces a final reply (or the round
+    /// budget is exhausted, after which we force a tool-free answer).
+    async fn run_tool_loop(
+        &self,
+        system_prompt: &str,
+        message: &str,
+        executor: &dyn ToolExecutor,
+    ) -> Result<String, anyhow::Error> {
+        let specs = executor.specs();
+        let mut items = vec![
+            ConversationItem::System(system_prompt.to_string()),
+            ConversationItem::User(message.to_string()),
+        ];
+
+        for _ in 0..MAX_TOOL_ROUNDS {
+            match self.ai.chat_turn(&items, &specs).await? {
+                AiTurn::Reply(text) => return Ok(text),
+                AiTurn::ToolCalls(calls) if !calls.is_empty() => {
+                    items.push(ConversationItem::Assistant {
+                        content: None,
+                        tool_calls: calls.clone(),
+                    });
+                    for call in &calls {
+                        let content = executor
+                            .run(call)
+                            .await
+                            .unwrap_or_else(|e| format!("tool error: {e}"));
+                        items.push(ConversationItem::ToolResult {
+                            call_id: call.id.clone(),
+                            name: call.name.clone(),
+                            content,
+                        });
+                    }
+                }
+                // Empty tool-call batch: treat as "no answer", break to the final ask.
+                AiTurn::ToolCalls(_) => break,
+            }
+        }
+
+        // Round budget spent (or a degenerate empty batch): ask once more with no
+        // tools so the model must commit to a prose answer from what it gathered.
+        match self.ai.chat_turn(&items, &[]).await? {
+            AiTurn::Reply(text) => Ok(text),
+            AiTurn::ToolCalls(_) => {
+                Ok("I gathered your records but couldn't compose an answer in time. Ask me again?".to_string())
+            }
+        }
     }
 
     /// Assembles the grounded system prompt: persona + Guardian dossier + retrieved lore.
@@ -139,5 +208,71 @@ mod tests {
         let saga = ConversationSaga::new(ai, None, GhostPersonality::Hunter);
         let reply = saga.converse("hey Ghost", None).await.unwrap();
         assert!(!reply.is_empty());
+    }
+
+    use crate::voice_ai::tools::{AiTurn, ConversationItem, ToolCall, ToolExecutor, ToolSpec};
+
+    /// First turn requests a tool; once a tool result is in history, replies.
+    struct ToolingAi {
+        rounds: std::sync::Mutex<u32>,
+    }
+    #[async_trait]
+    impl GenerativeAiPort for ToolingAi {
+        async fn interpret_command(&self, _: &str, _: &str) -> Result<VoiceIntent, anyhow::Error> {
+            unreachable!()
+        }
+        async fn chat_turn(
+            &self,
+            items: &[ConversationItem],
+            _tools: &[ToolSpec],
+        ) -> Result<AiTurn, anyhow::Error> {
+            let saw_tool_result = items
+                .iter()
+                .any(|i| matches!(i, ConversationItem::ToolResult { .. }));
+            if saw_tool_result {
+                Ok(AiTurn::Reply("You cleared King's Fall on June 18 with Saint-14.".into()))
+            } else {
+                *self.rounds.lock().unwrap() += 1;
+                Ok(AiTurn::ToolCalls(vec![ToolCall {
+                    id: "call_1".into(),
+                    name: "bungie_get".into(),
+                    arguments: "{\"path\":\"/Platform/Destiny2/3/Account/1/Stats/\"}".into(),
+                }]))
+            }
+        }
+    }
+
+    struct SpyExecutor {
+        ran: std::sync::Mutex<u32>,
+    }
+    #[async_trait]
+    impl ToolExecutor for SpyExecutor {
+        fn specs(&self) -> Vec<ToolSpec> {
+            vec![ToolSpec {
+                name: "bungie_get".into(),
+                description: "read Bungie data".into(),
+                parameters: serde_json::json!({"type":"object"}),
+            }]
+        }
+        async fn run(&self, call: &ToolCall) -> Result<String, anyhow::Error> {
+            *self.ran.lock().unwrap() += 1;
+            assert_eq!(call.name, "bungie_get");
+            Ok("{\"raid\":\"King's Fall\"}".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_loop_runs_tool_then_replies() {
+        let ai = Arc::new(ToolingAi { rounds: std::sync::Mutex::new(0) });
+        let saga = ConversationSaga::new(ai, None, GhostPersonality::Warlock);
+        let exec = SpyExecutor { ran: std::sync::Mutex::new(0) };
+
+        let reply = saga
+            .converse_with_tools("when did I last clear a raid?", None, Some(&exec))
+            .await
+            .unwrap();
+
+        assert!(reply.contains("King's Fall"));
+        assert_eq!(*exec.ran.lock().unwrap(), 1, "the tool was executed once");
     }
 }
