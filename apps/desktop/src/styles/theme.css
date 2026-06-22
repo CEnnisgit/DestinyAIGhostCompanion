@@ -727,3 +727,37 @@ body {
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* Activity Log */
+.activity-narrative {
+  margin: 0 0 6px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.55;
+  font-style: italic;
+}
+.activity-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 6px;
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+}
+.activity-status.done {
+  color: var(--accent);
+  border-color: var(--accent-hairline);
+}
+.activity-date {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.activity-with {
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+.lore-entry-head .spacer {
+  flex: 1;
+}

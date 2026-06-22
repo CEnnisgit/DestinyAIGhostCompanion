@@ -5,12 +5,14 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { SettingsModal } from "./components/SettingsModal";
 import { LoreCodex } from "./components/LoreCodex";
+import { ActivityLog } from "./components/ActivityLog";
 import { SacredBackground } from "./components/SacredGeometry";
 
 export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [codexOpen, setCodexOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   return (
     <GhostProvider>
@@ -22,11 +24,13 @@ export function App() {
             onMenu={() => setMenuOpen(true)}
             onSettings={() => setSettingsOpen(true)}
             onCodex={() => setCodexOpen(true)}
+            onActivity={() => setActivityOpen(true)}
           />
           <ChatView />
         </div>
         {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
         {codexOpen && <LoreCodex onClose={() => setCodexOpen(false)} />}
+        {activityOpen && <ActivityLog onClose={() => setActivityOpen(false)} />}
       </div>
     </GhostProvider>
   );
