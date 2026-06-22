@@ -130,11 +130,14 @@ body {
 .sg-star {
   fill: #cfe3ff;
 }
-.sg-seed {
+.sg-planet {
+  opacity: 0.85;
+}
+.sg-planet-rim {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 0.7;
-  opacity: 0.14;
+  stroke-width: 0.6;
+  opacity: 0.28;
 }
 .sg-star-seal {
   fill: none;
@@ -370,25 +373,24 @@ body {
   color: var(--text-2);
 }
 .suggestions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
-  margin-top: 12px;
-  width: 100%;
+  margin-top: 16px;
+  max-width: 560px;
 }
 .suggestion {
-  text-align: left;
   background: var(--surface);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--accent-hairline);
   color: var(--text);
-  border-radius: 14px;
-  padding: 14px;
+  border-radius: 999px;
+  padding: 10px 18px;
   font-size: 14px;
   cursor: pointer;
-  min-height: 64px;
 }
 .suggestion:hover {
-  border-color: var(--accent-hairline);
+  border-color: var(--accent);
 }
 
 /* Composer */

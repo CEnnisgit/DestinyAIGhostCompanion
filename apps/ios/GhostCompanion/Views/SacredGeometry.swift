@@ -1,14 +1,14 @@
 import SwiftUI
 
-/// A symmetric, radially-centered sacred-geometry backdrop: a starfield,
-/// concentric rings, evenly-spaced radial spokes, a faceted star, and a
-/// Flower-of-Life seed — all centered for a divine, balanced feel.
+/// A clean, symmetric, sphere-themed backdrop: concentric orbital rings with
+/// planet-spheres on them, and a faint starfield. The center is kept clear so
+/// the Ghost has room to breathe.
 struct SacredBackground: View {
     var body: some View {
         Canvas { ctx, size in
             let accent = GhostTheme.accent
             let c = CGPoint(x: size.width / 2, y: size.height / 2)
-            let maxR = Double(max(size.width, size.height))
+            let base = Double(max(size.width, size.height))
 
             // Deterministic starfield.
             var seed: UInt64 = 1337
@@ -17,99 +17,56 @@ struct SacredBackground: View {
                 return Double((seed >> 16) & 0x7fff) / Double(0x7fff)
             }
             let starColor = Color(red: 0.81, green: 0.89, blue: 1.0)
-            for _ in 0..<90 {
+            for _ in 0..<70 {
                 let x = rand() * Double(size.width)
                 let y = rand() * Double(size.height)
-                let r = rand() * 1.1 + 0.2
-                let o = rand() * 0.5 + 0.1
+                let r = rand() * 1.0 + 0.2
+                let o = rand() * 0.45 + 0.1
                 ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
                          with: .color(starColor.opacity(o)))
             }
 
-            // Concentric rings centered.
-            var frac = 0.08
-            while frac <= 0.95 {
-                let r = maxR * frac
+            // Concentric orbital rings centered.
+            for frac in [0.18, 0.30, 0.42, 0.56, 0.72, 0.90] {
+                let r = base * frac
                 ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
                            with: .color(accent.opacity(0.15)), lineWidth: 0.7)
-                frac += 0.13
             }
 
-            // Evenly-spaced radial spokes from center (dotted, symmetric).
-            let dashed = StrokeStyle(lineWidth: 0.6, dash: [1, 7])
-            for i in 0..<48 {
-                let a = Double(i) * 2 * .pi / 48
-                let start = CGPoint(x: c.x + CGFloat(cos(a)) * 70, y: c.y + CGFloat(sin(a)) * 70)
-                let end = CGPoint(x: c.x + CGFloat(cos(a)) * maxR, y: c.y + CGFloat(sin(a)) * maxR)
-                ctx.stroke(line(start, end), with: .color(accent.opacity(0.12)), style: dashed)
-            }
-
-            // Centered faceted star.
-            ctx.stroke(starPath(center: c, outer: 120, inner: 56, points: 12),
-                       with: .color(accent.opacity(0.5)), lineWidth: 0.9)
-
-            // Flower-of-Life seed: a central circle ringed by six, hexagonally.
-            let seedR: CGFloat = 40
-            var centers = [c]
-            for i in 0..<6 {
-                let a = Double(i) * .pi / 3
-                centers.append(CGPoint(x: c.x + CGFloat(cos(a)) * seedR, y: c.y + CGFloat(sin(a)) * seedR))
-            }
-            for center in centers {
-                ctx.stroke(Path(ellipseIn: CGRect(x: center.x - seedR, y: center.y - seedR, width: seedR * 2, height: seedR * 2)),
-                           with: .color(accent.opacity(0.14)), lineWidth: 0.7)
+            // Planet-spheres placed symmetrically on orbital rings.
+            let orbits: [(frac: Double, count: Int, phase: Double, size: CGFloat)] = [
+                (0.42, 6, 30, 12), (0.56, 6, 0, 9), (0.72, 6, 30, 7),
+            ]
+            for orbit in orbits {
+                let radius = base * orbit.frac
+                for i in 0..<orbit.count {
+                    let a = (Double(i) * 360.0 / Double(orbit.count) + orbit.phase) * .pi / 180
+                    let px = c.x + CGFloat(cos(a)) * radius
+                    let py = c.y + CGFloat(sin(a)) * radius
+                    let s = orbit.size
+                    let rect = CGRect(x: px - s, y: py - s, width: s * 2, height: s * 2)
+                    let grad = Gradient(stops: [
+                        .init(color: Color(red: 0.65, green: 0.83, blue: 1.0).opacity(0.55), location: 0),
+                        .init(color: Color(red: 0.13, green: 0.19, blue: 0.30).opacity(0.5), location: 0.55),
+                        .init(color: Color(red: 0.03, green: 0.05, blue: 0.09).opacity(0.5), location: 1),
+                    ])
+                    ctx.fill(Path(ellipseIn: rect),
+                             with: .radialGradient(grad,
+                                                   center: CGPoint(x: px - s * 0.3, y: py - s * 0.35),
+                                                   startRadius: 0, endRadius: s * 1.6))
+                    ctx.stroke(Path(ellipseIn: rect), with: .color(accent.opacity(0.28)), lineWidth: 0.6)
+                }
             }
         }
         .allowsHitTesting(false)
         .ignoresSafeArea()
     }
-
-    private func line(_ a: CGPoint, _ b: CGPoint) -> Path {
-        Path { p in
-            p.move(to: a)
-            p.addLine(to: b)
-        }
-    }
-
-    private func starPath(center: CGPoint, outer: CGFloat, inner: CGFloat, points: Int) -> Path {
-        var path = Path()
-        for i in 0..<(points * 2) {
-            let r = i % 2 == 0 ? outer : inner
-            let a = Double(i) * .pi / Double(points) - .pi / 2
-            let pt = CGPoint(x: center.x + CGFloat(cos(a)) * r, y: center.y + CGFloat(sin(a)) * r)
-            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
-        }
-        path.closeSubpath()
-        return path
-    }
 }
 
-/// A faceted star outline shape.
-struct StarShape: Shape {
-    var points: Int = 8
-    var innerRatio: CGFloat = 0.5
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let c = CGPoint(x: rect.midX, y: rect.midY)
-        let outer = min(rect.width, rect.height) / 2
-        let inner = outer * innerRatio
-        for i in 0..<(points * 2) {
-            let r = i % 2 == 0 ? outer : inner
-            let a = Double(i) * .pi / Double(points) - .pi / 2
-            let pt = CGPoint(x: c.x + CGFloat(cos(a)) * r, y: c.y + CGFloat(sin(a)) * r)
-            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
-        }
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// The Ghost framed by a rotating rosette, a counter-rotating faceted star, and
-/// a soft, breathing radiant bloom of the Traveler's light.
+/// The Ghost framed by a clean rotating rosette and a soft, breathing radiant
+/// bloom of the Traveler's light — circular forms, no clutter.
 struct GhostHalo: View {
     @State private var angle: Double = 0
-    @State private var revAngle: Double = 0
     @State private var pulse = false
 
     var body: some View {
@@ -135,11 +92,6 @@ struct GhostHalo: View {
             }
             .rotationEffect(.degrees(angle))
 
-            StarShape(points: 8, innerRatio: 0.5)
-                .stroke(GhostTheme.accent.opacity(0.35), lineWidth: 0.8)
-                .frame(width: 120, height: 120)
-                .rotationEffect(.degrees(revAngle))
-
             Circle()
                 .stroke(GhostTheme.accent.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [2, 6]))
                 .frame(width: 124, height: 124)
@@ -150,7 +102,6 @@ struct GhostHalo: View {
         .frame(width: 200, height: 200)
         .onAppear {
             withAnimation(.linear(duration: 48).repeatForever(autoreverses: false)) { angle = 360 }
-            withAnimation(.linear(duration: 60).repeatForever(autoreverses: false)) { revAngle = -360 }
             withAnimation(.easeInOut(duration: 5).repeatForever(autoreverses: true)) { pulse = true }
         }
     }

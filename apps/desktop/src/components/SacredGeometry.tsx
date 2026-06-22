@@ -1,84 +1,76 @@
 import { GhostMark } from "./GhostMark";
 
 // Deterministic pseudo-random so the starfield is stable between renders.
-function stars(count: number) {
-  let seed = 1337;
-  const rand = () => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    return seed / 0x7fffffff;
+function rng(seed: number) {
+  let s = seed;
+  return () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
   };
+}
+
+function starfield(count: number) {
+  const rand = rng(1337);
   return Array.from({ length: count }, () => ({
     x: rand() * 960,
     y: rand() * 600,
-    r: rand() * 1.1 + 0.2,
-    o: rand() * 0.5 + 0.1,
+    r: rand() * 1.0 + 0.2,
+    o: rand() * 0.45 + 0.1,
   }));
 }
 
-// Points of an N-point star (alternating outer/inner radius), centered at (cx, cy).
-function starPoints(cx: number, cy: number, outer: number, inner: number, points: number) {
-  const pts: string[] = [];
-  for (let i = 0; i < points * 2; i += 1) {
-    const r = i % 2 === 0 ? outer : inner;
-    const a = (i * Math.PI) / points - Math.PI / 2;
-    pts.push(`${(cx + Math.cos(a) * r).toFixed(1)},${(cy + Math.sin(a) * r).toFixed(1)}`);
-  }
-  return pts.join(" ");
+// Planet-spheres placed symmetrically on an orbital ring.
+function orbit(cx: number, cy: number, radius: number, count: number, phase: number, size: number) {
+  return Array.from({ length: count }, (_, i) => {
+    const a = ((i * 360) / count + phase) * (Math.PI / 180);
+    return { x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius, size };
+  });
 }
 
-/// A symmetric, radially-centered sacred-geometry backdrop: a starfield, a
-/// Flower-of-Life seed, concentric rings, evenly-spaced radial spokes, and a
-/// faceted star — all centered for a divine, balanced feel.
+/// A clean, symmetric, sphere-themed backdrop: concentric orbital rings with
+/// planet-spheres on them, and a faint starfield. The center is kept clear so
+/// the Ghost has room to breathe.
 export function SacredBackground() {
   const cx = 480;
   const cy = 300;
-  const field = stars(90);
-  const rings = [70, 150, 240, 340, 450, 580, 720];
-  const spokes = Array.from({ length: 48 }, (_, i) => (i * 360) / 48);
-  // Flower of Life seed: a central circle ringed by six, hexagonally.
-  const seedR = 40;
-  const seed = [[cx, cy], ...Array.from({ length: 6 }, (_, i) => {
-    const a = (i * Math.PI) / 3;
-    return [cx + Math.cos(a) * seedR, cy + Math.sin(a) * seedR];
-  })];
+  const field = starfield(70);
+  const rings = [150, 250, 360, 480, 620, 770];
+  const planets = [
+    ...orbit(cx, cy, 360, 6, 30, 12),
+    ...orbit(cx, cy, 480, 6, 0, 9),
+    ...orbit(cx, cy, 620, 6, 30, 7),
+  ];
 
   return (
     <svg className="sacred-bg" viewBox="0 0 960 600" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <defs>
+        <radialGradient id="planetGrad" cx="36%" cy="30%" r="75%">
+          <stop offset="0%" stopColor="#a6d4ff" stopOpacity="0.55" />
+          <stop offset="55%" stopColor="#21314e" stopOpacity="0.5" />
+          <stop offset="100%" stopColor="#080e16" stopOpacity="0.5" />
+        </radialGradient>
+      </defs>
+
       {field.map((s, i) => (
         <circle key={`star${i}`} className="sg-star" cx={s.x} cy={s.y} r={s.r} style={{ opacity: s.o }} />
       ))}
 
-      {/* Symmetric concentric rings */}
       {rings.map((r) => (
         <circle key={`ring${r}`} className="sg-ring" cx={cx} cy={cy} r={r} />
       ))}
 
-      {/* Evenly-spaced radial spokes from the center */}
-      {spokes.map((deg) => {
-        const a = (deg * Math.PI) / 180;
-        return (
-          <line
-            key={`s${deg}`}
-            className="sg-spoke"
-            x1={cx + Math.cos(a) * 70}
-            y1={cy + Math.sin(a) * 70}
-            x2={cx + Math.cos(a) * 760}
-            y2={cy + Math.sin(a) * 760}
-          />
-        );
-      })}
-
-      {/* Centered faceted star + Flower-of-Life seed + core */}
-      <polygon className="sg-star-seal" points={starPoints(cx, cy, 120, 56, 12)} />
-      {seed.map(([x, y], i) => (
-        <circle key={`seed${i}`} className="sg-seed" cx={x} cy={y} r={seedR} />
+      {planets.map((p, i) => (
+        <g key={`planet${i}`}>
+          <circle className="sg-planet" cx={p.x} cy={p.y} r={p.size} fill="url(#planetGrad)" />
+          <circle className="sg-planet-rim" cx={p.x} cy={p.y} r={p.size} />
+        </g>
       ))}
-      <circle className="sg-mandala" cx={cx} cy={cy} r="34" />
     </svg>
   );
 }
 
-/// The Ghost framed by a rotating rosette + a soft radiant bloom of light.
+/// The Ghost framed by a clean rotating rosette and a soft, breathing radiant
+/// bloom of the Traveler's light — circular forms, no clutter.
 export function GhostHalo() {
   const ticks = Array.from({ length: 24 }, (_, i) => i * 15);
   return (
@@ -100,9 +92,6 @@ export function GhostHalo() {
             );
           })}
           <circle className="halo-ring" cx="100" cy="100" r="86" />
-        </g>
-        <g className="halo-spin-rev">
-          <polygon className="halo-star" points={starPoints(100, 100, 60, 30, 8)} />
         </g>
         <circle className="halo-ring faint" cx="100" cy="100" r="62" />
         <circle className="halo-ring" cx="100" cy="100" r="44" />
