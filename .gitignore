@@ -51,3 +51,7 @@ apps/ios/DerivedData/
 node_modules/
 apps/desktop/dist/
 apps/desktop/release/
+
+# User-provided lore datasets (keep the sample)
+lore_import/*.jsonl
+!lore_import/sample.jsonl

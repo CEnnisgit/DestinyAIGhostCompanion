@@ -58,6 +58,14 @@ async fn main() -> anyhow::Result<()> {
         Err(err) => tracing::warn!(error = %err, "lore seed failed"),
     }
 
+    // Import any external lore datasets (D1 Grimoire dumps, transcripts, etc.).
+    let import_dir = std::env::var("GHOST_LORE_IMPORT_DIR").unwrap_or_else(|_| "lore_import".into());
+    match db::import_lore_dir(&pool, &import_dir).await {
+        Ok(0) => {}
+        Ok(entries) => tracing::info!(entries, dir = %import_dir, "imported external lore"),
+        Err(err) => tracing::warn!(error = %err, "external lore import failed"),
+    }
+
     // --- Adapters + domain saga ---
     let oauth = BungieOAuthConfig::from_env()
         .context("BUNGIE_CLIENT_ID / BUNGIE_CLIENT_SECRET / BUNGIE_API_KEY must be set")?;
