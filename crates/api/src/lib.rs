@@ -9,6 +9,7 @@ pub mod bungie_identity_client;
 pub mod bungie_inventory_client;
 pub mod bungie_oauth_routes;
 pub mod openai_client;
+pub mod session_auth;
 pub mod websocket_handler;
 
 pub use bungie_activity_client::BungieActivityClient;
@@ -19,6 +20,7 @@ pub use bungie_identity_client::BungieIdentityClient;
 pub use bungie_inventory_client::BungieInventoryClient;
 pub use bungie_oauth_routes::{auth_router, AppState, BungieOAuthConfig};
 pub use openai_client::OpenAiClient;
+pub use session_auth::HmacSessionAuthority;
 
 use axum::{routing::get, Router};
 use tower_http::cors::CorsLayer;

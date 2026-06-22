@@ -11,7 +11,8 @@ use sqlx::postgres::PgPoolOptions;
 
 use api::{
     build_router, AppState, BungieActivityClient, BungieApiClient, BungieCareerClient,
-    BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig, CharacterClient, OpenAiClient,
+    BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig, CharacterClient,
+    HmacSessionAuthority, OpenAiClient,
 };
 use db::{
     EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync, PostgresChatStore,
@@ -141,6 +142,28 @@ async fn main() -> anyhow::Result<()> {
     // --- Chat sync (server-side conversations, cross-device) ---
     let chat_saga = Arc::new(ChatSyncSaga::new(Arc::new(PostgresChatStore::new(pool.clone()))));
 
+    // --- Sessions (security) ---
+    // Production MUST set GHOST_SESSION_SECRET (a strong random string) and
+    // GHOST_REQUIRE_AUTH=1, so every request is authenticated by a signed
+    // session and the `membership_id` parameter dev fallback is disabled.
+    let require_auth = env_flag("GHOST_REQUIRE_AUTH");
+    let session: Arc<dyn domain::auth::ports::SessionAuthority> = match HmacSessionAuthority::from_env() {
+        Some(authority) => Arc::new(authority),
+        None if require_auth => {
+            anyhow::bail!(
+                "GHOST_REQUIRE_AUTH is set but GHOST_SESSION_SECRET is not — refusing to start without a session signing secret"
+            );
+        }
+        None => {
+            tracing::warn!(
+                "GHOST_SESSION_SECRET unset — using an INSECURE dev secret and accepting the membership_id param. Set GHOST_SESSION_SECRET and GHOST_REQUIRE_AUTH=1 in production."
+            );
+            Arc::new(HmacSessionAuthority::new(
+                b"ghost-dev-insecure-session-secret".to_vec(),
+            ))
+        }
+    };
+
     let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
     // Shared as a lore-grounding source for the conversational Ghost too.
     let lore_port: Arc<dyn domain::lore::ports::GrimoireDatabasePort> = grimoire.clone();
@@ -210,6 +233,8 @@ async fn main() -> anyhow::Result<()> {
         profile_saga,
         bungie_api,
         chat_saga,
+        session,
+        require_auth,
         lore_library,
         ws_dev_token,
     };
