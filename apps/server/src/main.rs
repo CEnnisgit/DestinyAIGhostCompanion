@@ -105,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
     let lore_saga = Some(Arc::new(LoreSaga::new(grimoire)));
+    let lore_library = Arc::new(db::LoreLibrary::new(pool.clone()));
 
     // --- Voice AI (Phase 4C) ---
     // Built only when an LLM is configured; the server still boots without one
@@ -154,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
         lore_saga,
         character_client,
         profile_saga,
+        lore_library,
         ws_dev_token,
     };
 
