@@ -34,6 +34,31 @@ struct GhostBackend {
         return try JSONDecoder().decode([CharacterSummary].self, from: data)
     }
 
+    /// `GET /lore/categories` → Codex categories with counts.
+    func loreCategories() async throws -> [LoreCategory] {
+        try await getJSON([LoreCategory].self, path: "lore/categories", query: [])
+    }
+
+    /// `GET /lore/browse?category=...` → entries within a category.
+    func loreBrowse(category: String) async throws -> [LoreEntry] {
+        try await getJSON([LoreEntry].self, path: "lore/browse", query: [URLQueryItem(name: "category", value: category)])
+    }
+
+    /// `GET /lore/search?q=...` → structured lore search.
+    func loreSearch(query: String) async throws -> [LoreEntry] {
+        try await getJSON([LoreEntry].self, path: "lore/search", query: [URLQueryItem(name: "q", value: query)])
+    }
+
+    private func getJSON<T: Decodable>(_ type: T.Type, path: String, query: [URLQueryItem]) async throws -> T {
+        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        if !query.isEmpty { components.queryItems = query }
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw GhostBackendError.badStatus
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
     /// `GET /profile/summary?membership_id=...` → the Guardian career dossier.
     func profileSummary(membershipID: String) async throws -> String {
         var components = URLComponents(url: baseURL.appendingPathComponent("profile/summary"), resolvingAgainstBaseURL: false)!

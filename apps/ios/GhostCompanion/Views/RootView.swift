@@ -4,6 +4,7 @@ struct RootView: View {
     @EnvironmentObject private var session: GhostSession
     @State private var showSettings = false
     @State private var showConversations = false
+    @State private var showCodex = false
 
     var body: some View {
         ZStack {
@@ -16,6 +17,7 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showConversations) { ConversationsView() }
+        .sheet(isPresented: $showCodex) { LoreCodexView() }
     }
 
     private var header: some View {
@@ -43,6 +45,13 @@ struct RootView: View {
                 }
 
                 Spacer()
+
+                Button { showCodex = true } label: {
+                    Image(systemName: "books.vertical")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(GhostTheme.accent)
+                }
+                .accessibilityLabel("Lore Codex")
 
                 Button { session.newConversation() } label: {
                     Image(systemName: "square.and.pencil")
