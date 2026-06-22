@@ -63,6 +63,66 @@ struct GhostBackend {
         )
     }
 
+    // MARK: - Cross-device chat sync
+
+    /// `GET /conversations?membership_id=...` → the owner's synced threads.
+    func listConversations(membershipID: String) async throws -> [SyncedThreadSummary] {
+        struct Wrap: Decodable { let threads: [SyncedThreadSummary] }
+        return try await getJSON(
+            Wrap.self, path: "conversations",
+            query: [URLQueryItem(name: "membership_id", value: membershipID)]
+        ).threads
+    }
+
+    /// `POST /conversations` → create a new synced thread.
+    func createConversation(membershipID: String, title: String? = nil) async throws -> SyncedThreadSummary {
+        struct Wrap: Decodable { let thread: SyncedThreadSummary }
+        var body: [String: Any] = ["membership_id": membershipID]
+        if let title { body["title"] = title }
+        return try await sendJSON(Wrap.self, method: "POST", path: "conversations", body: body).thread
+    }
+
+    /// `GET /conversations/{id}?membership_id=...` → a thread with its messages.
+    func getConversation(membershipID: String, id: String) async throws -> SyncedThread {
+        struct Wrap: Decodable { let thread: SyncedThread }
+        return try await getJSON(
+            Wrap.self, path: "conversations/\(id)",
+            query: [URLQueryItem(name: "membership_id", value: membershipID)]
+        ).thread
+    }
+
+    /// `DELETE /conversations/{id}?membership_id=...`
+    func deleteConversation(membershipID: String, id: String) async throws {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("conversations/\(id)"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "membership_id", value: membershipID)]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "DELETE"
+        _ = try await URLSession.shared.data(for: request)
+    }
+
+    /// `POST /chat` → a grounded reply. When `conversationID` is given the server
+    /// persists the turn so it syncs across the user's devices.
+    func chat(message: String, membershipID: String?, conversationID: String?) async throws -> String {
+        struct Wrap: Decodable { let reply: String }
+        var body: [String: Any] = ["message": message]
+        if let membershipID { body["membership_id"] = membershipID }
+        if let conversationID { body["conversation_id"] = conversationID }
+        return try await sendJSON(Wrap.self, method: "POST", path: "chat", body: body).reply
+    }
+
+    private func sendJSON<T: Decodable>(_ type: T.Type, method: String, path: String, body: [String: Any]) async throws -> T {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw GhostBackendError.badStatus
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
     private func getJSON<T: Decodable>(_ type: T.Type, path: String, query: [URLQueryItem]) async throws -> T {
         var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var session: GhostSession
+    @EnvironmentObject private var auth: AuthStore
     @State private var showSettings = false
     @State private var showConversations = false
     @State private var showCodex = false
@@ -17,6 +18,7 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .task(id: auth.membershipID) { session.setSyncOwner(auth.membershipID) }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showConversations) { ConversationsView() }
         .sheet(isPresented: $showCodex) { LoreCodexView() }
