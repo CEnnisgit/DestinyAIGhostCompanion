@@ -131,13 +131,30 @@ body {
   fill: #cfe3ff;
 }
 .sg-planet {
-  opacity: 0.85;
+  opacity: 0.95;
 }
 .sg-planet-rim {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 0.6;
-  opacity: 0.28;
+  stroke-width: 0.7;
+  opacity: 0.4;
+}
+.sg-orbit {
+  transform-origin: 480px 300px;
+}
+.orbit-a {
+  animation: orbit-spin 200s linear infinite;
+}
+.orbit-b {
+  animation: orbit-spin 300s linear infinite reverse;
+}
+.orbit-c {
+  animation: orbit-spin 420s linear infinite;
+}
+@keyframes orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .sg-star-seal {
   fill: none;
@@ -280,7 +297,7 @@ body {
   background: var(--surface-2);
   border: 1px solid var(--accent-hairline);
   padding: 10px 14px;
-  border-radius: 18px;
+  border-radius: 22px;
   line-height: 1.45;
   white-space: pre-wrap;
 }
@@ -464,7 +481,7 @@ body {
 .conv {
   display: flex;
   align-items: center;
-  border-radius: 10px;
+  border-radius: 14px;
 }
 .conv.active {
   background: var(--surface-2);
@@ -529,7 +546,7 @@ body {
   width: min(420px, 92vw);
   background: var(--surface);
   border: 1px solid var(--accent-hairline);
-  border-radius: 16px;
+  border-radius: 20px;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -595,7 +612,7 @@ body {
   justify-content: space-between;
   background: var(--bg);
   border: 1px solid var(--hairline);
-  border-radius: 10px;
+  border-radius: 14px;
   color: var(--text);
   padding: 10px 12px;
   cursor: pointer;
@@ -635,7 +652,7 @@ body {
   background: var(--bg);
   border: 1px solid var(--hairline);
   color: var(--text-2);
-  border-radius: 8px;
+  border-radius: 999px;
   padding: 8px 10px;
   font-size: 13px;
   cursor: pointer;
@@ -664,7 +681,7 @@ body {
 .lore-entry {
   background: var(--bg);
   border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 12px 14px;
 }
 .lore-entry-head {

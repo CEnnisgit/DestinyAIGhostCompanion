@@ -181,10 +181,10 @@ private struct MessageRow: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .fill(GhostTheme.surfaceElevated)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
                                     .stroke(GhostTheme.accentHairline, lineWidth: 1)
                             )
                     )
