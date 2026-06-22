@@ -49,8 +49,8 @@ struct VoiceChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 18) {
-            GhostMark(size: 68, glow: true)
-                .padding(.top, 36)
+            GhostHalo()
+                .padding(.top, 24)
             VStack(spacing: 6) {
                 Text("Eyes up, Guardian.")
                     .font(.title3.weight(.semibold))
