@@ -15,8 +15,8 @@ use api::{
     HmacSessionAuthority, OpenAiClient,
 };
 use db::{
-    EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync, PostgresChatStore,
-    PostgresTokenStorageAdapter,
+    EmbeddingClient, GrimoireSearch, ManifestActivityResolver, ManifestItemResolver, ManifestSync,
+    PostgresChatStore, PostgresTokenStorageAdapter,
 };
 use domain::auth::saga::OAuthSessionSaga;
 use domain::chats::saga::ChatSyncSaga;
@@ -115,11 +115,10 @@ async fn main() -> anyhow::Result<()> {
     ));
     // Activity history: what the Guardian has done in-game (raid dates, fireteams),
     // across Destiny 2 and Destiny 1. Folded into the personalization dossier.
-    let activity_client = Arc::new(BungieActivityClient::new(
-        http.clone(),
-        oauth.api_key.clone(),
-        token_storage.clone(),
-    ));
+    let activity_client = Arc::new(
+        BungieActivityClient::new(http.clone(), oauth.api_key.clone(), token_storage.clone())
+            .with_activity_resolver(Arc::new(ManifestActivityResolver::new(pool.clone()))),
+    );
     let profile_saga = Arc::new(
         GuardianProfileSaga::new(career_client).with_activity(activity_client),
     );
