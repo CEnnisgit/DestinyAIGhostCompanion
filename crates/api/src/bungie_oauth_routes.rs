@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
+    http::StatusCode,
     response::{IntoResponse, Json, Redirect, Response},
     routing::get,
     Router,
@@ -22,6 +23,8 @@ use domain::auth::membership::BungieMembershipId;
 use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::token::BungieOAuthToken;
 use domain::career::saga::GuardianProfileSaga;
+use domain::chats::model::NewMessage;
+use domain::chats::saga::ChatSyncSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
 use domain::voice_ai::conversation::ConversationSaga;
@@ -98,6 +101,8 @@ pub struct AppState {
     pub profile_saga: Arc<GuardianProfileSaga>,
     /// Generic authenticated Bungie read passthrough (any Platform GET).
     pub bungie_api: Arc<crate::bungie_api_client::BungieApiClient>,
+    /// Server-side conversation store so chats sync across the user's devices.
+    pub chat_saga: Arc<ChatSyncSaga>,
     /// Read access to the lore corpus for the browsable Codex.
     pub lore_library: Arc<db::LoreLibrary>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
@@ -115,6 +120,17 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/profile/summary", get(profile_summary))
         .route("/activity/summary", get(activity_summary))
         .route("/bungie", get(bungie_passthrough))
+        .route(
+            "/conversations",
+            get(list_conversations).post(create_conversation),
+        )
+        .route(
+            "/conversations/:id",
+            get(get_conversation)
+                .patch(rename_conversation)
+                .delete(delete_conversation),
+        )
+        .route("/conversations/:id/messages", axum::routing::post(append_message))
         .route("/chat", axum::routing::post(chat))
         .route("/lore", get(lore))
         .route("/lore/categories", get(lore_categories))
@@ -199,6 +215,112 @@ async fn activity_summary(
     })))
 }
 
+// --- Cross-device chat sync ------------------------------------------------
+//
+// Conversations live server-side keyed by the owner (Bungie membership id), so
+// they follow the user across devices. For now `membership_id` arrives as a
+// parameter (the existing dev auth seam); the security pass will derive the
+// owner from a validated session instead. The store already scopes every query
+// by owner, so a real session id slots straight in.
+
+#[derive(Debug, Deserialize)]
+struct OwnerQuery {
+    membership_id: String,
+}
+
+/// `GET /conversations?membership_id=...` — the owner's thread list.
+async fn list_conversations(
+    State(state): State<AppState>,
+    Query(params): Query<OwnerQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let threads = state.chat_saga.list(&params.membership_id).await?;
+    Ok(Json(json!({ "threads": threads })))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateConversation {
+    membership_id: String,
+    title: Option<String>,
+}
+
+/// `POST /conversations` — create a new thread for the owner.
+async fn create_conversation(
+    State(state): State<AppState>,
+    Json(req): Json<CreateConversation>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let thread = state
+        .chat_saga
+        .create(&req.membership_id, req.title.as_deref())
+        .await?;
+    Ok(Json(json!({ "thread": thread })))
+}
+
+/// `GET /conversations/{id}?membership_id=...` — a thread with its messages.
+async fn get_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<OwnerQuery>,
+) -> Result<Response, AppError> {
+    match state.chat_saga.get(&params.membership_id, &id).await? {
+        Some(thread) => Ok(Json(json!({ "thread": thread })).into_response()),
+        None => Ok((StatusCode::NOT_FOUND, "conversation not found").into_response()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AppendMessage {
+    membership_id: String,
+    role: String,
+    text: String,
+    intent: Option<String>,
+}
+
+/// `POST /conversations/{id}/messages` — append a message to a thread.
+async fn append_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<AppendMessage>,
+) -> Result<Response, AppError> {
+    let message = NewMessage::new(req.role, req.text, req.intent);
+    match state
+        .chat_saga
+        .append(&req.membership_id, &id, message)
+        .await?
+    {
+        Some(stored) => Ok(Json(json!({ "message": stored })).into_response()),
+        None => Ok((StatusCode::NOT_FOUND, "conversation not found").into_response()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameConversation {
+    membership_id: String,
+    title: String,
+}
+
+/// `PATCH /conversations/{id}` — rename a thread.
+async fn rename_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<RenameConversation>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    state
+        .chat_saga
+        .rename(&req.membership_id, &id, &req.title)
+        .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// `DELETE /conversations/{id}?membership_id=...` — delete a thread.
+async fn delete_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<OwnerQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    state.chat_saga.delete(&params.membership_id, &id).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[derive(Debug, Deserialize)]
 struct BungiePassthroughQuery {
     /// A Bungie Platform path, e.g. `/Platform/Destiny2/3/Profile/123/?components=200,900`.
@@ -231,6 +353,10 @@ struct ChatRequest {
     /// Optional: when present, the reply is grounded in this Guardian's career +
     /// activity dossier so the Ghost speaks to what they've actually done.
     membership_id: Option<String>,
+    /// Optional synced thread id. When present (with a membership), the Guardian
+    /// message and the Ghost's reply are persisted so the conversation syncs
+    /// across the user's devices.
+    conversation_id: Option<String>,
 }
 
 /// `POST /chat` — free-form conversation with the Ghost. Body:
@@ -271,6 +397,25 @@ async fn chat(
         Ok(reply) => reply,
         Err(_) => "The Ghost faltered reaching for an answer. Try again in a moment.".to_string(),
     };
+
+    // Persist the turn to the synced thread when the client supplied one.
+    if let (Some(membership), Some(thread_id)) =
+        (req.membership_id.as_deref(), req.conversation_id.as_deref())
+    {
+        let _ = state
+            .chat_saga
+            .append(membership, thread_id, NewMessage::new("guardian", &req.message, None))
+            .await;
+        let _ = state
+            .chat_saga
+            .append(
+                membership,
+                thread_id,
+                NewMessage::new("ghost", &reply, Some("conversation".to_string())),
+            )
+            .await;
+    }
+
     Ok(Json(json!({ "reply": reply })))
 }
 

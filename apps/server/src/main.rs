@@ -14,10 +14,11 @@ use api::{
     BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig, CharacterClient, OpenAiClient,
 };
 use db::{
-    EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync,
+    EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync, PostgresChatStore,
     PostgresTokenStorageAdapter,
 };
 use domain::auth::saga::OAuthSessionSaga;
+use domain::chats::saga::ChatSyncSaga;
 use domain::career::saga::GuardianProfileSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
@@ -137,6 +138,9 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing::info!("lore RAG: keyword search (set EMBEDDING_API_KEY for semantic search)");
     }
+    // --- Chat sync (server-side conversations, cross-device) ---
+    let chat_saga = Arc::new(ChatSyncSaga::new(Arc::new(PostgresChatStore::new(pool.clone()))));
+
     let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
     // Shared as a lore-grounding source for the conversational Ghost too.
     let lore_port: Arc<dyn domain::lore::ports::GrimoireDatabasePort> = grimoire.clone();
@@ -205,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
         character_client,
         profile_saga,
         bungie_api,
+        chat_saga,
         lore_library,
         ws_dev_token,
     };
