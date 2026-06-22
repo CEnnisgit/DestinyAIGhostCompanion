@@ -1,5 +1,29 @@
 import Foundation
 
+/// Server-synced thread summary (from GET /conversations).
+struct SyncedThreadSummary: Decodable {
+    let id: String
+    let title: String
+    let updated_at: String
+}
+
+/// Server-synced message (from GET /conversations/:id).
+struct SyncedMessage: Decodable {
+    let id: String
+    let role: String
+    let text: String
+    let intent: String?
+    let created_at: String
+}
+
+/// A full server-synced thread with its messages.
+struct SyncedThread: Decodable {
+    let id: String
+    let title: String
+    let updated_at: String
+    let messages: [SyncedMessage]
+}
+
 /// A saved chat thread with the Ghost.
 struct Conversation: Identifiable, Codable, Equatable {
     let id: UUID

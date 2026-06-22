@@ -27,6 +27,10 @@ final class GhostSession: ObservableObject {
     @Published private(set) var conversations: [Conversation]
     @Published private(set) var selectedID: UUID
 
+    /// When set (the signed-in Guardian's membership id), conversations sync
+    /// server-side and follow the user across devices; when nil they're local.
+    @Published private(set) var syncOwner: String?
+
     private static let urlKey = "ghost.backend.url"
     private var socket: URLSessionWebSocketTask?
 
@@ -45,9 +49,69 @@ final class GhostSession: ObservableObject {
         conversations.first { $0.id == selectedID }?.messages ?? []
     }
 
+    // MARK: - Sync
+
+    /// Links the session to the signed-in Guardian. When the owner changes we
+    /// switch the conversation source between the server (synced) and local disk.
+    func setSyncOwner(_ id: String?) {
+        guard syncOwner != id else { return }
+        syncOwner = id
+        if let id {
+            Task { await loadServerThreads(owner: id) }
+        } else {
+            var loaded = Self.loadConversations().sorted { $0.updatedAt > $1.updatedAt }
+            if loaded.isEmpty { loaded = [Conversation()] }
+            conversations = loaded
+            selectedID = loaded[0].id
+        }
+    }
+
+    private func loadServerThreads(owner: String) async {
+        guard let backend else { return }
+        do {
+            let threads = try await backend.listConversations(membershipID: owner)
+            if threads.isEmpty {
+                let created = try await backend.createConversation(membershipID: owner)
+                conversations = [Self.conversation(from: created)]
+                selectedID = conversations[0].id
+            } else {
+                conversations = threads.map(Self.conversation(from:))
+                if !conversations.contains(where: { $0.id == selectedID }) {
+                    selectedID = conversations[0].id
+                }
+            }
+        } catch {
+            // Backend unreachable — keep whatever is on screen.
+        }
+    }
+
+    private static func conversation(from t: SyncedThreadSummary) -> Conversation {
+        Conversation(
+            id: UUID(uuidString: t.id) ?? UUID(),
+            title: t.title,
+            messages: [],
+            updatedAt: isoDate(t.updated_at)
+        )
+    }
+
+    private static func isoDate(_ s: String) -> Date {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return withFraction.date(from: s) ?? ISO8601DateFormatter().date(from: s) ?? Date()
+    }
+
     // MARK: - Conversations
 
     func newConversation() {
+        if let owner = syncOwner {
+            Task {
+                guard let backend, let created = try? await backend.createConversation(membershipID: owner) else { return }
+                conversations.insert(Self.conversation(from: created), at: 0)
+                selectedID = conversations[0].id
+                isAwaiting = false
+            }
+            return
+        }
         if let current = conversations.first(where: { $0.id == selectedID }), current.isEmpty {
             return // reuse the already-empty thread
         }
@@ -61,22 +125,46 @@ final class GhostSession: ObservableObject {
     func selectConversation(_ id: UUID) {
         selectedID = id
         isAwaiting = false
+        // Lazily fetch this thread's messages from the server when synced.
+        if let owner = syncOwner,
+           let current = conversations.first(where: { $0.id == id }), current.messages.isEmpty {
+            Task { await loadMessages(owner: owner, id: id) }
+        }
+    }
+
+    private func loadMessages(owner: String, id: UUID) async {
+        guard let backend,
+              let thread = try? await backend.getConversation(membershipID: owner, id: id.uuidString),
+              let index = conversations.firstIndex(where: { $0.id == id })
+        else { return }
+        conversations[index].title = thread.title
+        conversations[index].messages = thread.messages.map {
+            ChatMessage(
+                id: UUID(uuidString: $0.id) ?? UUID(),
+                role: $0.role == "ghost" ? .ghost : .guardian,
+                text: $0.text,
+                intent: $0.intent
+            )
+        }
     }
 
     func deleteConversation(_ id: UUID) {
+        if let owner = syncOwner, let backend {
+            Task { try? await backend.deleteConversation(membershipID: owner, id: id.uuidString) }
+        }
         conversations.removeAll { $0.id == id }
         if conversations.isEmpty { conversations = [Conversation()] }
         if !conversations.contains(where: { $0.id == selectedID }) {
             selectedID = conversations[0].id
         }
-        persist()
+        if syncOwner == nil { persist() }
     }
 
     private func updateSelected(_ block: (inout Conversation) -> Void) {
         guard let index = conversations.firstIndex(where: { $0.id == selectedID }) else { return }
         block(&conversations[index])
         conversations[index].updatedAt = Date()
-        persist()
+        if syncOwner == nil { persist() }
     }
 
     // MARK: - Health
@@ -122,6 +210,25 @@ final class GhostSession: ObservableObject {
             conversation.messages.append(ChatMessage(role: .guardian, text: trimmed))
         }
 
+        // Signed in: send over HTTP /chat so the server persists the turn and the
+        // conversation syncs across devices (and the reply is game-data grounded).
+        if let owner = syncOwner {
+            let threadID = selectedID.uuidString
+            isAwaiting = true
+            Task {
+                defer { isAwaiting = false }
+                guard let backend else { return }
+                do {
+                    let reply = try await backend.chat(message: trimmed, membershipID: owner, conversationID: threadID)
+                    updateSelected { $0.messages.append(ChatMessage(role: .ghost, text: reply, intent: "conversation")) }
+                } catch {
+                    updateSelected { $0.messages.append(ChatMessage(role: .ghost, text: "The Ghost is unreachable right now.", intent: "error")) }
+                }
+            }
+            return
+        }
+
+        // Signed out: ephemeral local chat over the WebSocket.
         guard let socket,
               let data = try? JSONEncoder().encode(OutboundVoice(text: trimmed)),
               let json = String(data: data, encoding: .utf8)
