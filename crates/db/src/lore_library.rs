@@ -59,6 +59,18 @@ impl LoreLibrary {
         Ok(rows.into_iter().map(row_to_entry).collect())
     }
 
+    /// A handful of random entries (lore discovery).
+    pub async fn random(&self, limit: i64) -> Result<Vec<LoreEntry>, anyhow::Error> {
+        let rows = sqlx::query(
+            "SELECT name, description, category, source FROM destiny_lore ORDER BY random() LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("random lore")?;
+        Ok(rows.into_iter().map(row_to_entry).collect())
+    }
+
     /// Structured relevance search over the corpus.
     pub async fn search(&self, query: &str, limit: i64) -> Result<Vec<LoreEntry>, anyhow::Error> {
         if let Some(ts) = build_or_tsquery(query) {

@@ -112,7 +112,22 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/lore/categories", get(lore_categories))
         .route("/lore/browse", get(lore_browse))
         .route("/lore/search", get(lore_search))
+        .route("/lore/random", get(lore_random))
         .with_state(state)
+}
+
+#[derive(Debug, Deserialize)]
+struct RandomQuery {
+    n: Option<i64>,
+}
+
+/// `GET /lore/random?n=` — random entries for lore discovery.
+async fn lore_random(
+    State(state): State<AppState>,
+    Query(params): Query<RandomQuery>,
+) -> Result<Json<Vec<db::LoreEntry>>, AppError> {
+    let n = params.n.unwrap_or(1).clamp(1, 10);
+    Ok(Json(state.lore_library.random(n).await?))
 }
 
 /// `GET /lore/categories` — Codex index: categories with entry counts.
