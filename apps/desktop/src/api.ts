@@ -11,6 +11,7 @@ export interface LoreEntry {
   name: string;
   description: string;
   category?: string;
+  source?: string;
 }
 
 export interface LoreCategory {

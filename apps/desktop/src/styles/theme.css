@@ -702,6 +702,15 @@ body {
   border-radius: 999px;
   padding: 1px 6px;
 }
+.lore-src {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent-hairline);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
 .lore-desc {
   margin: 0;
   color: var(--text);

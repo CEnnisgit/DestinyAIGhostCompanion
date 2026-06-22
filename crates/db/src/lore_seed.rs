@@ -162,6 +162,39 @@ pub const SEED: &[(i64, &str, &str, &str)] = &[
     (4_200_000_109, "Characters", "Kabr, Praedyth, and Pahanin", "The doomed fireteam who first breached the Vault of Glass. Kabr became one with the Vault to forge the Aegis; Praedyth was lost to Vex time; only Pahanin escaped, to warn others away."),
     (4_200_000_110, "Characters", "Lord Felwinter", "A formidable Warlock of the Dark Age, once bound to the warlord Felwinter's Peak, whose name endures on the legendary shotgun Felwinter's Lie."),
     (4_200_000_111, "Characters", "The Crow's Companion, Glint", "Glint is the Ghost who resurrected the reborn Uldren Sov as the Guardian called Crow — a gentle, hopeful counterpart to the dark deeds of the man's past life."),
+
+    // ---- More characters ----
+    (4_200_000_112, "Characters", "Banshee-44", "A weathered Exo gunsmith in the Tower who has reset and forgotten his lives so many times he has lost count — yet his hands never forget how to build a weapon."),
+    (4_200_000_113, "Characters", "Failsafe", "The fractured AI of the wrecked colony ship Exodus Black on Nessus, swinging between a cheerful, polite personality and a bitterly depressed one while helping Guardians."),
+    (4_200_000_114, "Characters", "Amanda Holliday", "The Tower's shipwright, a sharp Earth-born pilot who keeps the Guardians' ships flying and never forgets her frontier roots."),
+    (4_200_000_115, "Characters", "Devrim Kay", "A gentle sniper and scout who watches over the European Dead Zone from a ruined church, sharing tea, intel, and a steady hand."),
+    (4_200_000_116, "Characters", "Suraya Hawthorne", "A City-born survivalist who rallied refugees during the Red War and became a vital link between the Vanguard and the ordinary people of the City."),
+    (4_200_000_117, "Characters", "The Spider", "A massive Fallen crime lord of the Tangled Shore who trades in favors, debts, and information — an unreliable ally of pure convenience."),
+    (4_200_000_118, "Characters", "Master Rahool", "The Tower Cryptarch, a scholar who decrypts the engrams Guardians recover from the field into gear, and the lost knowledge of the Golden Age."),
+    (4_200_000_119, "Characters", "Eido", "A young Eliksni scribe of the House of Light and Mithrax's adopted daughter, who records her people's history and dreams of a future of peace."),
+
+    // ---- More locations ----
+    (4_200_000_120, "Locations", "Mercury & the Infinite Forest", "A machine-world the Vex are converting into a vast simulation engine — the Infinite Forest — where they model infinite pasts and futures. Osiris waged a lonely war here against them."),
+    (4_200_000_121, "Locations", "Io", "The last place the Traveler touched before the Collapse, leaving the moon sacred to Guardians and bitterly contested by the Taken and the Cabal."),
+    (4_200_000_122, "Locations", "Titan", "A methane-ocean moon of Saturn covered by a flooded Golden Age Arcology, overrun by the Hive brood of Savathun beneath the endless waves."),
+    (4_200_000_123, "Locations", "Nessus", "A small planet wholly converted into a Vex machine, its surface a thin shell over endless mechanisms — and the resting place of the crashed colony ship Exodus Black."),
+    (4_200_000_124, "Locations", "The European Dead Zone", "A wild, ruined wilderness outside the Last City where Red Legion remnants, the Fallen, and Golden Age wreckage all collide, and where many refugees shelter."),
+    (4_200_000_125, "Locations", "The Leviathan", "Emperor Calus's vast, gilded world-ship — a decadent court and a deadly gauntlet — that drifted across the system as Calus's schemes and allegiances turned."),
+
+    // ---- Iconic weapons ----
+    (4_200_000_126, "Weapons", "The Last Word", "A storied hand cannon of the frontier, wielded by Shin Malphur to end Dredgen Yor. A weapon of the fastest draw and the hardest justice."),
+    (4_200_000_127, "Weapons", "Hawkmoon", "A near-mythic hand cannon whose luck borders on the paracausal; each is said to carry a fragment of its wielder's own fate."),
+    (4_200_000_128, "Weapons", "Outbreak Perfected", "An Exotic pulse rifle built around contained SIVA nanites, born of the House of Devils' Splicers and the long fight to end the SIVA plague."),
+    (4_200_000_129, "Weapons", "Touch of Malice", "A hand cannon forged from a shard of Oryx's own crystal that feeds on the wielder's life to fire an endless, hungering curse."),
+    (4_200_000_130, "Weapons", "Vex Mythoclast", "A fusion rifle recovered from the Vault of Glass that operates on the same principles the Vex use to rewrite reality itself."),
+
+    // ---- Traditions & events ----
+    (4_200_000_131, "Activities", "The Crucible", "Sanctioned Guardian-versus-Guardian combat overseen by Lord Shaxx, who believes only by fighting one another can Guardians stay sharp for the true war."),
+    (4_200_000_132, "Activities", "Trials of Osiris", "A high-stakes Crucible run in Osiris's name, where only flawless Guardians who lose no matches reach the Lighthouse and its rewards."),
+    (4_200_000_133, "Activities", "The Iron Banner", "Lord Saladin's recurring Crucible event honoring the Iron Lords, where raw power counts and only the worthy claim its wolf-marked gear."),
+    (4_200_000_134, "Events", "The Almighty", "A colossal Cabal weapon built to destroy the Sun, which Rasputin and the Guardians brought down in a desperate strike before it could fire on the Last City."),
+    (4_200_000_135, "Events", "The Dawning & Festival of the Lost", "City traditions kept alive against the dark: the Dawning's season of gift-baking and warmth, and the Festival of the Lost's masks honoring those who have fallen."),
+    (4_200_000_136, "The City", "The Cryptarchy", "The City's order of scholars who study and decode the relics, engrams, and fragmentary records Guardians recover, preserving knowledge through the long dark age."),
 ];
 
 /// Upserts the curated seed into `destiny_lore`. Idempotent; leaves existing
