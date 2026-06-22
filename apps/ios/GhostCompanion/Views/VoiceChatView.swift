@@ -12,10 +12,11 @@ struct VoiceChatView: View {
     private static let bottomAnchor = "ghost.bottom"
 
     private let suggestions = [
-        "Tell me about the Last City",
-        "Equip Sunshot on my Hunter",
-        "What's in my Postmaster?",
-        "Who is the Traveler?"
+        "The Last City",
+        "Equip Sunshot",
+        "My Postmaster",
+        "Who is the Traveler?",
+        "The Books of Sorrow"
     ]
 
     var body: some View {
@@ -61,11 +62,12 @@ struct VoiceChatView: View {
                     .multilineTextAlignment(.center)
             }
 
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 10)], spacing: 10) {
                 ForEach(suggestions, id: \.self) { suggestion in
-                    SuggestionCard(text: suggestion) { send(suggestion) }
+                    SuggestionPill(text: suggestion) { send(suggestion) }
                 }
             }
+            .padding(.horizontal, 8)
             .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
@@ -216,29 +218,25 @@ private struct MessageRow: View {
     }
 }
 
-private struct SuggestionCard: View {
+private struct SuggestionPill: View {
     let text: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack {
-                Text(text)
-                    .font(.footnote)
-                    .foregroundStyle(GhostTheme.textPrimary)
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(GhostTheme.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(GhostTheme.hairline, lineWidth: 1)
-                    )
-            )
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(GhostTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(
+                    Capsule()
+                        .fill(GhostTheme.surface)
+                        .overlay(Capsule().stroke(GhostTheme.accentHairline, lineWidth: 1))
+                )
         }
         .buttonStyle(.plain)
     }

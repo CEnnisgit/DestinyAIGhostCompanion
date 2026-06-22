@@ -5,10 +5,11 @@ import { GhostHalo } from "./SacredGeometry";
 import { Composer } from "./Composer";
 
 const SUGGESTIONS = [
-  "Tell me about the Last City",
-  "Equip Sunshot on my Hunter",
-  "What's in my Postmaster?",
+  "The Last City",
+  "Equip Sunshot",
+  "My Postmaster",
   "Who is the Traveler?",
+  "The Books of Sorrow",
 ];
 
 function intentClass(intent?: string): string {
