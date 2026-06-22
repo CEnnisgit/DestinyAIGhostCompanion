@@ -462,3 +462,91 @@ body {
 .char.active {
   border-color: var(--accent);
 }
+
+/* Lore Codex */
+.modal.codex {
+  width: min(900px, 94vw);
+  height: min(720px, 88vh);
+}
+.codex-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.codex-body {
+  display: flex;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+.codex-cats {
+  width: 190px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+.cat-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.cat-chip:hover {
+  color: var(--text);
+}
+.cat-chip.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.cat-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--accent);
+}
+.codex-entries {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+.lore-entry {
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.lore-entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.lore-name {
+  font-weight: 600;
+  color: var(--accent-bright);
+}
+.lore-cat {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--text-2);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.lore-desc {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}

@@ -7,6 +7,17 @@ export interface CharacterSummary {
   light: number;
 }
 
+export interface LoreEntry {
+  name: string;
+  description: string;
+  category?: string;
+}
+
+export interface LoreCategory {
+  category: string;
+  count: number;
+}
+
 export class GhostBackend {
   constructor(public baseURL: string) {}
 
@@ -42,5 +53,23 @@ export class GhostBackend {
     if (!res.ok) throw new Error(`profile request failed (${res.status})`);
     const data = (await res.json()) as { summary: string };
     return data.summary;
+  }
+
+  async loreCategories(): Promise<LoreCategory[]> {
+    const res = await fetch(this.url("/lore/categories"));
+    if (!res.ok) throw new Error(`lore categories failed (${res.status})`);
+    return res.json();
+  }
+
+  async loreBrowse(category: string): Promise<LoreEntry[]> {
+    const res = await fetch(this.url(`/lore/browse?category=${encodeURIComponent(category)}`));
+    if (!res.ok) throw new Error(`lore browse failed (${res.status})`);
+    return res.json();
+  }
+
+  async loreSearch(query: string): Promise<LoreEntry[]> {
+    const res = await fetch(this.url(`/lore/search?q=${encodeURIComponent(query)}`));
+    if (!res.ok) throw new Error(`lore search failed (${res.status})`);
+    return res.json();
   }
 }

@@ -1,8 +1,16 @@
 import { useGhost } from "../store";
 import { GhostMark } from "./GhostMark";
-import { MenuIcon, PencilIcon, GearIcon } from "./Icons";
+import { MenuIcon, PencilIcon, GearIcon, BookIcon } from "./Icons";
 
-export function Header({ onMenu, onSettings }: { onMenu: () => void; onSettings: () => void }) {
+export function Header({
+  onMenu,
+  onSettings,
+  onCodex,
+}: {
+  onMenu: () => void;
+  onSettings: () => void;
+  onCodex: () => void;
+}) {
   const { health, startConversation } = useGhost();
 
   const statusText =
@@ -22,6 +30,9 @@ export function Header({ onMenu, onSettings }: { onMenu: () => void; onSettings:
         </div>
       </div>
       <div className="spacer" />
+      <button className="icon-btn" onClick={onCodex} title="Lore Codex" aria-label="Lore Codex">
+        <BookIcon />
+      </button>
       <button className="icon-btn" onClick={startConversation} title="New conversation" aria-label="New conversation">
         <PencilIcon />
       </button>
