@@ -26,6 +26,9 @@ const MANIFEST_URL: &str = "https://www.bungie.net/Platform/Destiny2/Manifest/";
 const BUNGIE_ROOT: &str = "https://www.bungie.net";
 const VERSION_KEY: &str = "manifest_version";
 const EMBED_BATCH: usize = 100;
+/// Offset applied to item hashes when storing their flavor text as lore, so they
+/// never collide with `DestinyLoreDefinition` hashes (u32) or the curated seed.
+const ITEM_LORE_HASH_OFFSET: i64 = 5_000_000_000;
 
 pub struct ManifestSync {
     pg: PgPool,
@@ -180,9 +183,16 @@ impl ManifestSync {
             .execute(&self.pg)
             .await?;
             items += 1;
+
+            // Many weapons/armor carry italic "flavorText" lore — ingest it into
+            // the lore corpus too (offset hash to avoid colliding with lore defs).
+            let flavor = string_at(&def, &["flavorText"]);
+            if !flavor.is_empty() {
+                upsert_lore(&self.pg, hash + ITEM_LORE_HASH_OFFSET, &name, &flavor, "Item Lore").await?;
+            }
         }
 
-        // Lore.
+        // Lore definitions (Grimoire / lore entries).
         let lore_rows = sqlx::query("SELECT id, json FROM DestinyLoreDefinition")
             .fetch_all(&sqlite)
             .await
@@ -195,20 +205,7 @@ impl ManifestSync {
             if description.is_empty() {
                 continue;
             }
-            // Leave embedding NULL; the backfill fills it. Reset embedding on text change.
-            sqlx::query(
-                "INSERT INTO destiny_lore (hash, name, description) VALUES ($1, $2, $3)
-                 ON CONFLICT (hash) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    description = EXCLUDED.description,
-                    embedding = CASE WHEN destiny_lore.description <> EXCLUDED.description
-                                     THEN NULL ELSE destiny_lore.embedding END",
-            )
-            .bind(hash)
-            .bind(&name)
-            .bind(&description)
-            .execute(&self.pg)
-            .await?;
+            upsert_lore(&self.pg, hash, &name, &description, "Grimoire").await?;
             lore += 1;
         }
 
@@ -282,6 +279,32 @@ fn decode_def(row: &sqlx::sqlite::SqliteRow) -> Option<(i64, Value)> {
     let hash = (id as i32) as u32 as i64;
     let value = serde_json::from_str::<Value>(&json).ok()?;
     Some((hash, value))
+}
+
+/// Upserts a lore row, clearing the embedding only when the text changed.
+async fn upsert_lore(
+    pg: &sqlx::PgPool,
+    hash: i64,
+    name: &str,
+    description: &str,
+    category: &str,
+) -> Result<(), anyhow::Error> {
+    sqlx::query(
+        "INSERT INTO destiny_lore (hash, name, description, category) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (hash) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            embedding = CASE WHEN destiny_lore.description <> EXCLUDED.description
+                             THEN NULL ELSE destiny_lore.embedding END",
+    )
+    .bind(hash)
+    .bind(name)
+    .bind(description)
+    .bind(category)
+    .execute(pg)
+    .await?;
+    Ok(())
 }
 
 fn string_at(def: &Value, path: &[&str]) -> String {
