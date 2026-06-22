@@ -19,6 +19,20 @@ export interface LoreCategory {
   count: number;
 }
 
+export interface ActivityRecord {
+  name: string;
+  mode: string;
+  period: string;
+  completed: boolean;
+  fireteam: string[];
+  game: "Destiny1" | "Destiny2";
+}
+
+export interface ActivitySummary {
+  narrative: string;
+  recent: ActivityRecord[];
+}
+
 export class GhostBackend {
   constructor(public baseURL: string) {}
 
@@ -54,6 +68,12 @@ export class GhostBackend {
     if (!res.ok) throw new Error(`profile request failed (${res.status})`);
     const data = (await res.json()) as { summary: string };
     return data.summary;
+  }
+
+  async activitySummary(membershipId: string): Promise<ActivitySummary> {
+    const res = await fetch(this.url(`/activity/summary?membership_id=${encodeURIComponent(membershipId)}`));
+    if (!res.ok) throw new Error(`activity request failed (${res.status})`);
+    return res.json();
   }
 
   async loreCategories(): Promise<LoreCategory[]> {

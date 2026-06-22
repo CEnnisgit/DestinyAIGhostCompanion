@@ -5,6 +5,7 @@ struct RootView: View {
     @State private var showSettings = false
     @State private var showConversations = false
     @State private var showCodex = false
+    @State private var showActivity = false
 
     var body: some View {
         ZStack {
@@ -19,6 +20,7 @@ struct RootView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showConversations) { ConversationsView() }
         .sheet(isPresented: $showCodex) { LoreCodexView() }
+        .sheet(isPresented: $showActivity) { ActivityLogView() }
     }
 
     private var header: some View {
@@ -46,6 +48,13 @@ struct RootView: View {
                 }
 
                 Spacer()
+
+                Button { showActivity = true } label: {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(GhostTheme.accent)
+                }
+                .accessibilityLabel("Activity Log")
 
                 Button { showCodex = true } label: {
                     Image(systemName: "books.vertical")

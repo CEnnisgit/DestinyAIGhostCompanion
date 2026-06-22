@@ -54,6 +54,15 @@ struct GhostBackend {
         try await getJSON([LoreEntry].self, path: "lore/random", query: [URLQueryItem(name: "n", value: String(n))])
     }
 
+    /// `GET /activity/summary?membership_id=...` → recent activity history.
+    func activitySummary(membershipID: String) async throws -> ActivitySummary {
+        try await getJSON(
+            ActivitySummary.self,
+            path: "activity/summary",
+            query: [URLQueryItem(name: "membership_id", value: membershipID)]
+        )
+    }
+
     private func getJSON<T: Decodable>(_ type: T.Type, path: String, query: [URLQueryItem]) async throws -> T {
         var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }

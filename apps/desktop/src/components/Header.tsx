@@ -1,15 +1,17 @@
 import { useGhost } from "../store";
 import { GhostMark } from "./GhostMark";
-import { MenuIcon, PencilIcon, GearIcon, BookIcon } from "./Icons";
+import { MenuIcon, PencilIcon, GearIcon, BookIcon, ActivityIcon } from "./Icons";
 
 export function Header({
   onMenu,
   onSettings,
   onCodex,
+  onActivity,
 }: {
   onMenu: () => void;
   onSettings: () => void;
   onCodex: () => void;
+  onActivity: () => void;
 }) {
   const { health, startConversation } = useGhost();
 
@@ -30,6 +32,9 @@ export function Header({
         </div>
       </div>
       <div className="spacer" />
+      <button className="icon-btn" onClick={onActivity} title="Activity Log" aria-label="Activity Log">
+        <ActivityIcon />
+      </button>
       <button className="icon-btn" onClick={onCodex} title="Lore Codex" aria-label="Lore Codex">
         <BookIcon />
       </button>
