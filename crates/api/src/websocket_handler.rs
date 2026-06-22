@@ -23,6 +23,7 @@ use domain::auth::membership::BungieMembershipId;
 use domain::career::saga::GuardianProfileSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
+use domain::voice_ai::conversation::ConversationSaga;
 use domain::voice_ai::intent::VoiceIntent;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
@@ -78,8 +79,17 @@ async fn voice_ws_handler(
             let equip_saga = state.equip_saga.clone();
             let lore_saga = state.lore_saga.clone();
             let profile_saga = state.profile_saga.clone();
+            let conversation_saga = state.conversation_saga.clone();
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, saga, equip_saga, lore_saga, profile_saga, equip_ctx)
+                handle_socket(
+                    socket,
+                    saga,
+                    conversation_saga,
+                    equip_saga,
+                    lore_saga,
+                    profile_saga,
+                    equip_ctx,
+                )
             })
         }
         None => (
@@ -99,24 +109,26 @@ fn is_authorized(state: &AppState, token: Option<&str>) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_socket(
     mut socket: WebSocket,
     saga: Arc<VoiceCommandSaga>,
+    conversation_saga: Option<Arc<ConversationSaga>>,
     equip_saga: Arc<EquipItemSaga>,
     lore_saga: Option<Arc<LoreSaga>>,
     profile_saga: Arc<GuardianProfileSaga>,
     equip_ctx: Option<EquipContext>,
 ) {
-    // For a signed-in user, fetch the career dossier: greet them and use it to
-    // personalize every reply.
+    // For a signed-in user, fetch the full dossier (career stats + recent
+    // activity): greet them and use it to personalize and ground every reply.
     let guardian_context: Option<String> = match &equip_ctx {
-        Some(ctx) => match profile_saga.summarize(&ctx.membership_id).await {
-            Ok(dossier) => {
+        Some(ctx) => match profile_saga.full_context(&ctx.membership_id).await {
+            Some(dossier) => {
                 let greeting = json!({ "response": dossier, "intent": "greeting" }).to_string();
                 let _ = socket.send(Message::Text(greeting)).await;
                 Some(dossier)
             }
-            Err(_) => None,
+            None => None,
         },
         None => None,
     };
@@ -126,6 +138,7 @@ async fn handle_socket(
             Message::Text(text) => {
                 let reply = process_text(
                     &saga,
+                    conversation_saga.as_deref(),
                     &equip_saga,
                     lore_saga.as_deref(),
                     guardian_context.as_deref(),
@@ -149,8 +162,10 @@ struct InboundVoice {
 }
 
 /// Parses one inbound frame, runs the saga, and renders the JSON reply string.
+#[allow(clippy::too_many_arguments)]
 async fn process_text(
     saga: &VoiceCommandSaga,
+    conversation_saga: Option<&ConversationSaga>,
     equip_saga: &EquipItemSaga,
     lore_saga: Option<&LoreSaga>,
     guardian_context: Option<&str>,
@@ -183,7 +198,22 @@ async fn process_text(
                 return json!({ "response": response, "intent": "equip" }).to_string();
             }
 
-            // Answer lore queries from the RAG pipeline when embeddings are configured.
+            // Conversational intents (lore questions, open chat) get a free-form,
+            // grounded reply from the Ghost when an LLM is configured: anchored in
+            // retrieved lore AND the Guardian's own career/activity dossier.
+            if let (VoiceIntent::Lore { .. } | VoiceIntent::Unknown { .. }, Some(chat)) =
+                (&intent, conversation_saga)
+            {
+                match chat.converse(&inbound.text, guardian_context).await {
+                    Ok(reply) => {
+                        return json!({ "response": reply, "intent": "conversation" }).to_string()
+                    }
+                    // Fall through to the lore RAG / canned reply on LLM failure.
+                    Err(_) => {}
+                }
+            }
+
+            // Answer lore queries from the RAG pipeline when conversation is unavailable.
             if let (VoiceIntent::Lore { topic }, Some(lore)) = (&intent, lore_saga) {
                 let response = match lore.process_lore_query(topic).await {
                     Ok(context) => context,
