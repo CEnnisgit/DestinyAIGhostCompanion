@@ -12,6 +12,7 @@ pub struct LoreEntry {
     pub name: String,
     pub description: String,
     pub category: Option<String>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,7 +48,7 @@ impl LoreLibrary {
     /// Entries within a category, alphabetical.
     pub async fn browse(&self, category: &str, limit: i64) -> Result<Vec<LoreEntry>, anyhow::Error> {
         let rows = sqlx::query(
-            "SELECT name, description, category FROM destiny_lore
+            "SELECT name, description, category, source FROM destiny_lore
              WHERE category = $1 ORDER BY name LIMIT $2",
         )
         .bind(category)
@@ -63,10 +64,11 @@ impl LoreLibrary {
         if let Some(ts) = build_or_tsquery(query) {
             let rows = sqlx::query(
                 r#"
-                SELECT name, description, category
+                SELECT name, description, category, source
                 FROM destiny_lore, to_tsquery('english', $1) AS q
                 WHERE to_tsvector('english', name || ' ' || COALESCE(description, '')) @@ q
-                ORDER BY ts_rank(to_tsvector('english', name || ' ' || COALESCE(description, '')), q) DESC
+                ORDER BY (source = 'curated') ASC,
+                         ts_rank(to_tsvector('english', name || ' ' || COALESCE(description, '')), q) DESC
                 LIMIT $2
                 "#,
             )
@@ -82,8 +84,9 @@ impl LoreLibrary {
 
         let like = format!("%{}%", query.trim());
         let rows = sqlx::query(
-            "SELECT name, description, category FROM destiny_lore
-             WHERE name ILIKE $1 OR description ILIKE $1 ORDER BY length(name) ASC LIMIT $2",
+            "SELECT name, description, category, source FROM destiny_lore
+             WHERE name ILIKE $1 OR description ILIKE $1
+             ORDER BY (source = 'curated') ASC, length(name) ASC LIMIT $2",
         )
         .bind(&like)
         .bind(limit)
@@ -99,5 +102,6 @@ fn row_to_entry(r: sqlx::postgres::PgRow) -> LoreEntry {
         name: r.get("name"),
         description: r.get("description"),
         category: r.try_get("category").ok(),
+        source: r.try_get("source").ok(),
     }
 }
