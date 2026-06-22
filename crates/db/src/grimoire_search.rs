@@ -93,7 +93,7 @@ impl GrimoireSearch {
 /// Builds a Postgres `to_tsquery` OR-expression from a natural-language topic:
 /// keeps significant words, drops short words and common stop words, joins with `|`.
 /// Returns `None` when nothing significant remains.
-fn build_or_tsquery(topic: &str) -> Option<String> {
+pub(crate) fn build_or_tsquery(topic: &str) -> Option<String> {
     const STOP: &[&str] = &[
         "the", "and", "for", "was", "are", "you", "who", "what", "whats", "tell", "about", "give",
         "does", "did", "how", "why", "can", "with", "from", "this", "that", "your", "his", "her",

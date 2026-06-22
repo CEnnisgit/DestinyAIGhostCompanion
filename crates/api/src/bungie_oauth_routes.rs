@@ -93,6 +93,8 @@ pub struct AppState {
     pub character_client: Arc<CharacterClient>,
     /// Builds a Guardian's career dossier for personalization.
     pub profile_saga: Arc<GuardianProfileSaga>,
+    /// Read access to the lore corpus for the browsable Codex.
+    pub lore_library: Arc<db::LoreLibrary>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
     /// open locally. TODO: replace with real Bungie-session/JWT validation once
     /// session minting exists (Phase 4B currently returns the membership id only).
@@ -107,7 +109,38 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/characters", get(characters))
         .route("/profile/summary", get(profile_summary))
         .route("/lore", get(lore))
+        .route("/lore/categories", get(lore_categories))
+        .route("/lore/browse", get(lore_browse))
+        .route("/lore/search", get(lore_search))
         .with_state(state)
+}
+
+/// `GET /lore/categories` — Codex index: categories with entry counts.
+async fn lore_categories(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<db::LoreCategory>>, AppError> {
+    Ok(Json(state.lore_library.categories().await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowseQuery {
+    category: String,
+}
+
+/// `GET /lore/browse?category=...` — entries within a category.
+async fn lore_browse(
+    State(state): State<AppState>,
+    Query(params): Query<BrowseQuery>,
+) -> Result<Json<Vec<db::LoreEntry>>, AppError> {
+    Ok(Json(state.lore_library.browse(&params.category, 200).await?))
+}
+
+/// `GET /lore/search?q=...` — structured (entry-level) lore search.
+async fn lore_search(
+    State(state): State<AppState>,
+    Query(params): Query<LoreQuery>,
+) -> Result<Json<Vec<db::LoreEntry>>, AppError> {
+    Ok(Json(state.lore_library.search(&params.q, 25).await?))
 }
 
 #[derive(Debug, Deserialize)]
