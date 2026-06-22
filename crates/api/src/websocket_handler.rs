@@ -38,11 +38,13 @@ pub fn voice_ws_router(state: AppState) -> Router {
 
 #[derive(Debug, Deserialize)]
 struct WsAuthQuery {
+    /// Optional legacy dev token (gates the socket when no real auth is required).
     token: Option<String>,
-    // DEV SEAM: a real implementation derives these from the authenticated
-    // session (Bungie membership) and resolves the character from the intent's
-    // class. Until session minting exists they may be passed as query params so
-    // the equip flow is end-to-end testable. TODO: replace with real session.
+    /// Signed session token; when valid it authenticates the connection and
+    /// supplies the owning membership (preferred over the `membership_id` param).
+    session: Option<String>,
+    /// DEV SEAM: membership/character as params. Honored only when auth isn't
+    /// required; a valid `session` always takes precedence for the membership.
     membership_id: Option<String>,
     character_id: Option<String>,
 }
@@ -60,17 +62,34 @@ async fn voice_ws_handler(
     State(state): State<AppState>,
     Query(query): Query<WsAuthQuery>,
 ) -> Response {
-    if !is_authorized(&state, query.token.as_deref()) {
+    // A valid session authenticates the connection and names the owner.
+    let session_member = query
+        .session
+        .as_deref()
+        .and_then(|t| state.session.verify(t).ok())
+        .map(|s| s.membership_id);
+
+    // Production: a real session is mandatory. Dev: keep the legacy token gate.
+    if state.require_auth {
+        if session_member.is_none() {
+            return (StatusCode::UNAUTHORIZED, "valid session required").into_response();
+        }
+    } else if !is_authorized(&state, query.token.as_deref()) {
         return (StatusCode::UNAUTHORIZED, "missing or invalid session token").into_response();
     }
 
-    let equip_ctx = match (query.membership_id, query.character_id) {
-        (Some(m), Some(c)) if !m.is_empty() && !c.is_empty() => {
-            BungieMembershipId::new(m).ok().map(|membership_id| EquipContext {
-                membership_id,
-                character_id: c,
-            })
-        }
+    // Owner: the session's membership wins; otherwise the dev param (dev only).
+    let membership = session_member.or_else(|| {
+        query
+            .membership_id
+            .filter(|m| !m.is_empty())
+            .and_then(|m| BungieMembershipId::new(m).ok())
+    });
+    let equip_ctx = match (membership, query.character_id) {
+        (Some(membership_id), Some(c)) if !c.is_empty() => Some(EquipContext {
+            membership_id,
+            character_id: c,
+        }),
         _ => None,
     };
 

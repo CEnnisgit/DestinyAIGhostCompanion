@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Redirect, Response},
     routing::get,
     Router,
@@ -20,7 +20,9 @@ use serde::Deserialize;
 use serde_json::json;
 
 use domain::auth::membership::BungieMembershipId;
+use domain::auth::ports::SessionAuthority;
 use domain::auth::saga::OAuthSessionSaga;
+use domain::auth::session::Session;
 use domain::auth::token::BungieOAuthToken;
 use domain::career::saga::GuardianProfileSaga;
 use domain::chats::model::NewMessage;
@@ -103,12 +105,56 @@ pub struct AppState {
     pub bungie_api: Arc<crate::bungie_api_client::BungieApiClient>,
     /// Server-side conversation store so chats sync across the user's devices.
     pub chat_saga: Arc<ChatSyncSaga>,
+    /// Mints/verifies session tokens (the authenticated owner of a request).
+    pub session: Arc<dyn SessionAuthority>,
+    /// When true, requests MUST carry a valid session — the `membership_id`
+    /// parameter dev fallback is disabled. Set in production.
+    pub require_auth: bool,
     /// Read access to the lore corpus for the browsable Codex.
     pub lore_library: Arc<db::LoreLibrary>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
     /// open locally. TODO: replace with real Bungie-session/JWT validation once
     /// session minting exists (Phase 4B currently returns the membership id only).
     pub ws_dev_token: Option<String>,
+}
+
+/// Session lifetime: how long a minted token stays valid.
+const SESSION_TTL_DAYS: i64 = 30;
+
+impl AppState {
+    /// Resolves the authenticated owner of a request. A valid `Authorization:
+    /// Bearer <session>` always wins. Otherwise, only in dev (`require_auth ==
+    /// false`) do we fall back to a client-supplied `membership_id` claim;
+    /// in production a missing/invalid session is a 401.
+    pub fn resolve_owner(
+        &self,
+        headers: &HeaderMap,
+        claimed: Option<&str>,
+    ) -> Result<BungieMembershipId, AppError> {
+        if let Some(token) = bearer_token(headers) {
+            let session = self
+                .session
+                .verify(&token)
+                .map_err(|_| AppError::unauthorized("invalid or expired session"))?;
+            return Ok(session.membership_id);
+        }
+        if !self.require_auth {
+            if let Some(id) = claimed.map(str::trim).filter(|s| !s.is_empty()) {
+                return BungieMembershipId::new(id.to_string())
+                    .map_err(AppError::unauthorized);
+            }
+        }
+        Err(AppError::unauthorized("authentication required"))
+    }
+}
+
+/// Extracts a bearer token from the `Authorization` header, if present.
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+    value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .map(|t| t.trim().to_string())
 }
 
 /// Mounts the auth routes onto a router using the provided state.
@@ -184,15 +230,16 @@ async fn lore_search(
 
 #[derive(Debug, Deserialize)]
 struct MembershipQuery {
-    membership_id: String,
+    membership_id: Option<String>,
 }
 
-/// `GET /profile/summary?membership_id=...` — the Guardian career dossier.
+/// `GET /profile/summary` — the authenticated Guardian's career dossier.
 async fn profile_summary(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<MembershipQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let membership = BungieMembershipId::new(params.membership_id).map_err(|e| anyhow::anyhow!(e))?;
+    let membership = state.resolve_owner(&headers, params.membership_id.as_deref())?;
     let summary = match state.profile_saga.summarize(&membership).await {
         Ok(dossier) => dossier,
         Err(message) => message,
@@ -200,14 +247,15 @@ async fn profile_summary(
     Ok(Json(json!({ "summary": summary })))
 }
 
-/// `GET /activity/summary?membership_id=...` — recent activity history: what the
-/// Guardian played, when, completion, and the fireteam (D2 + D1). Includes a
-/// natural-language narrative for display.
+/// `GET /activity/summary` — the authenticated Guardian's recent activity
+/// history: what they played, when, completion, and the fireteam (D2 + D1).
+/// Includes a natural-language narrative for display.
 async fn activity_summary(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<MembershipQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let membership = BungieMembershipId::new(params.membership_id).map_err(|e| anyhow::anyhow!(e))?;
+    let membership = state.resolve_owner(&headers, params.membership_id.as_deref())?;
     let summary = state.profile_saga.activity(&membership).await;
     Ok(Json(json!({
         "narrative": summary.narrative(),
@@ -225,43 +273,47 @@ async fn activity_summary(
 
 #[derive(Debug, Deserialize)]
 struct OwnerQuery {
-    membership_id: String,
+    /// Dev fallback only; ignored when a session bearer is present / required.
+    membership_id: Option<String>,
 }
 
-/// `GET /conversations?membership_id=...` — the owner's thread list.
+/// `GET /conversations` — the authenticated owner's thread list.
 async fn list_conversations(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<OwnerQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let threads = state.chat_saga.list(&params.membership_id).await?;
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let threads = state.chat_saga.list(&owner.0).await?;
     Ok(Json(json!({ "threads": threads })))
 }
 
 #[derive(Debug, Deserialize)]
 struct CreateConversation {
-    membership_id: String,
+    membership_id: Option<String>,
     title: Option<String>,
 }
 
 /// `POST /conversations` — create a new thread for the owner.
 async fn create_conversation(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateConversation>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let thread = state
-        .chat_saga
-        .create(&req.membership_id, req.title.as_deref())
-        .await?;
+    let owner = state.resolve_owner(&headers, req.membership_id.as_deref())?;
+    let thread = state.chat_saga.create(&owner.0, req.title.as_deref()).await?;
     Ok(Json(json!({ "thread": thread })))
 }
 
-/// `GET /conversations/{id}?membership_id=...` — a thread with its messages.
+/// `GET /conversations/{id}` — a thread with its messages.
 async fn get_conversation(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Query(params): Query<OwnerQuery>,
 ) -> Result<Response, AppError> {
-    match state.chat_saga.get(&params.membership_id, &id).await? {
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    match state.chat_saga.get(&owner.0, &id).await? {
         Some(thread) => Ok(Json(json!({ "thread": thread })).into_response()),
         None => Ok((StatusCode::NOT_FOUND, "conversation not found").into_response()),
     }
@@ -269,7 +321,7 @@ async fn get_conversation(
 
 #[derive(Debug, Deserialize)]
 struct AppendMessage {
-    membership_id: String,
+    membership_id: Option<String>,
     role: String,
     text: String,
     intent: Option<String>,
@@ -278,15 +330,13 @@ struct AppendMessage {
 /// `POST /conversations/{id}/messages` — append a message to a thread.
 async fn append_message(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<AppendMessage>,
 ) -> Result<Response, AppError> {
+    let owner = state.resolve_owner(&headers, req.membership_id.as_deref())?;
     let message = NewMessage::new(req.role, req.text, req.intent);
-    match state
-        .chat_saga
-        .append(&req.membership_id, &id, message)
-        .await?
-    {
+    match state.chat_saga.append(&owner.0, &id, message).await? {
         Some(stored) => Ok(Json(json!({ "message": stored })).into_response()),
         None => Ok((StatusCode::NOT_FOUND, "conversation not found").into_response()),
     }
@@ -294,30 +344,31 @@ async fn append_message(
 
 #[derive(Debug, Deserialize)]
 struct RenameConversation {
-    membership_id: String,
+    membership_id: Option<String>,
     title: String,
 }
 
 /// `PATCH /conversations/{id}` — rename a thread.
 async fn rename_conversation(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<RenameConversation>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state
-        .chat_saga
-        .rename(&req.membership_id, &id, &req.title)
-        .await?;
+    let owner = state.resolve_owner(&headers, req.membership_id.as_deref())?;
+    state.chat_saga.rename(&owner.0, &id, &req.title).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-/// `DELETE /conversations/{id}?membership_id=...` — delete a thread.
+/// `DELETE /conversations/{id}` — delete a thread.
 async fn delete_conversation(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Query(params): Query<OwnerQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.chat_saga.delete(&params.membership_id, &id).await?;
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    state.chat_saga.delete(&owner.0, &id).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -335,15 +386,12 @@ struct BungiePassthroughQuery {
 /// bespoke route per endpoint.
 async fn bungie_passthrough(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<BungiePassthroughQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let membership = match params.membership_id.as_deref() {
-        Some(id) if !id.trim().is_empty() => Some(
-            BungieMembershipId::new(id.to_string()).map_err(|e| anyhow::anyhow!(e))?,
-        ),
-        _ => None,
-    };
-    let body = state.bungie_api.get(membership.as_ref(), &params.path).await?;
+    // Reads are authenticated as the owner so a user only sees their own data.
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let body = state.bungie_api.get(Some(&owner), &params.path).await?;
     Ok(Json(body))
 }
 
@@ -364,6 +412,7 @@ struct ChatRequest {
 /// grounded in lore RAG and (when `membership_id` is given) the player's dossier.
 async fn chat(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(conversation) = &state.conversation_saga else {
@@ -372,13 +421,10 @@ async fn chat(
         })));
     };
 
-    // Resolve the Guardian once: used for both the dossier context and to bind
-    // the live-data tool so the Ghost can read their game data on demand.
-    let membership = req
-        .membership_id
-        .as_deref()
-        .filter(|id| !id.trim().is_empty())
-        .and_then(|id| BungieMembershipId::new(id.to_string()).ok());
+    // Resolve the Guardian (when authenticated): used for the dossier context and
+    // to bind the live-data tool. Anonymous chat (no auth, dev) is still allowed —
+    // it just isn't personalized or persisted.
+    let membership = state.resolve_owner(&headers, req.membership_id.as_deref()).ok();
 
     let context: Option<String> = match &membership {
         Some(m) => state.profile_saga.full_context(m).await,
@@ -387,7 +433,7 @@ async fn chat(
 
     let executor = crate::bungie_api_client::BungieToolExecutor::new(
         state.bungie_api.clone(),
-        membership,
+        membership.clone(),
     );
 
     let reply = match conversation
@@ -398,18 +444,16 @@ async fn chat(
         Err(_) => "The Ghost faltered reaching for an answer. Try again in a moment.".to_string(),
     };
 
-    // Persist the turn to the synced thread when the client supplied one.
-    if let (Some(membership), Some(thread_id)) =
-        (req.membership_id.as_deref(), req.conversation_id.as_deref())
-    {
+    // Persist the turn to the synced thread when authenticated and one is given.
+    if let (Some(owner), Some(thread_id)) = (&membership, req.conversation_id.as_deref()) {
         let _ = state
             .chat_saga
-            .append(membership, thread_id, NewMessage::new("guardian", &req.message, None))
+            .append(&owner.0, thread_id, NewMessage::new("guardian", &req.message, None))
             .await;
         let _ = state
             .chat_saga
             .append(
-                membership,
+                &owner.0,
                 thread_id,
                 NewMessage::new("ghost", &reply, Some("conversation".to_string())),
             )
@@ -442,15 +486,16 @@ async fn lore(
 
 #[derive(Debug, Deserialize)]
 struct CharactersQuery {
-    membership_id: String,
+    membership_id: Option<String>,
 }
 
-/// `GET /characters?membership_id=...` — the user's Destiny characters.
+/// `GET /characters` — the authenticated user's Destiny characters.
 async fn characters(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<CharactersQuery>,
 ) -> Result<Json<Vec<CharacterSummary>>, AppError> {
-    let membership = BungieMembershipId::new(params.membership_id).map_err(|e| anyhow::anyhow!(e))?;
+    let membership = state.resolve_owner(&headers, params.membership_id.as_deref())?;
     let characters = state.character_client.list_characters(&membership).await?;
     Ok(Json(characters))
 }
@@ -489,22 +534,36 @@ async fn callback(
     let token = exchange_code_for_token(&state, &params.code).await?;
     let membership_id = state.auth_saga.process_new_login(token).await?;
 
+    // Mint a signed session the client presents on subsequent requests.
+    let session = Session::new(
+        membership_id.clone(),
+        Utc::now() + Duration::days(SESSION_TTL_DAYS),
+    );
+    let session_token = state.session.mint(&session)?;
+    let session_q = urlencoding::encode(&session_token);
+
     // 1. Web flow: redirect back to the (allowlisted) SPA return URL.
     if let Some(redirect) = params.state.filter(|r| state.oauth.allows_web(r)) {
         let sep = if redirect.contains('?') { '&' } else { '?' };
-        let target = format!("{redirect}{sep}membership_id={}", membership_id.0);
+        let target = format!(
+            "{redirect}{sep}membership_id={}&session={session_q}",
+            membership_id.0
+        );
         return Ok(Redirect::to(&target).into_response());
     }
 
     // 2. Native flow: redirect to the app URL scheme.
     if let Some(scheme) = &state.oauth.mobile_callback {
         let sep = if scheme.contains('?') { '&' } else { '?' };
-        let target = format!("{scheme}{sep}membership_id={}", membership_id.0);
+        let target = format!(
+            "{scheme}{sep}membership_id={}&session={session_q}",
+            membership_id.0
+        );
         return Ok(Redirect::to(&target).into_response());
     }
 
     // 3. Fallback: JSON.
-    Ok(Json(json!({ "membership_id": membership_id.0 })).into_response())
+    Ok(Json(json!({ "membership_id": membership_id.0, "session": session_token })).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -551,25 +610,45 @@ async fn exchange_code_for_token(
     })
 }
 
-/// Maps domain/adapter errors to a 500 response without leaking internals to the client.
-pub struct AppError(anyhow::Error);
+/// A route error carrying the client-facing status + message. Internal errors
+/// are logged but never leaked (they surface as a generic 500); explicit cases
+/// like 401 carry a safe public message.
+pub struct AppError {
+    status: StatusCode,
+    message: String,
+    /// Logged server-side only (for 500s); never sent to the client.
+    source: Option<anyhow::Error>,
+}
+
+impl AppError {
+    /// A 401 with a safe, client-facing message.
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+            source: None,
+        }
+    }
+}
 
 impl<E> From<E> for AppError
 where
     E: Into<anyhow::Error>,
 {
     fn from(err: E) -> Self {
-        Self(err.into())
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "internal error".to_string(),
+            source: Some(err.into()),
+        }
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        tracing::error!(error = %self.0, "auth route failed");
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "internal error",
-        )
-            .into_response()
+        if let Some(source) = &self.source {
+            tracing::error!(error = %source, "route failed");
+        }
+        (self.status, self.message).into_response()
     }
 }
