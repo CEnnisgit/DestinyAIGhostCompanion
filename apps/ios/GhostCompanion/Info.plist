@@ -6,6 +6,11 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Ghost Companion</string>
+	<!-- Default backend the app talks to. Set this to your production HTTPS
+	     endpoint before archiving for the App Store (e.g. https://api.example.com).
+	     Leave as localhost for development. Users can override it in Settings. -->
+	<key>GhostBackendURL</key>
+	<string>http://localhost:8080</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
