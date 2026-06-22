@@ -55,16 +55,28 @@ export interface SyncedThread {
 }
 
 export class GhostBackend {
-  constructor(public baseURL: string) {}
+  constructor(public baseURL: string, private sessionToken?: string) {}
 
   private url(path: string): string {
     return new URL(path, this.baseURL).toString();
   }
 
+  /// Headers for an authenticated request — attaches the session bearer when set.
+  private headers(extra?: Record<string, string>): Record<string, string> {
+    const h: Record<string, string> = { ...(extra ?? {}) };
+    if (this.sessionToken) h["Authorization"] = `Bearer ${this.sessionToken}`;
+    return h;
+  }
+
+  /// Authenticated GET helper.
+  private authedGet(path: string): Promise<Response> {
+    return fetch(this.url(path), { headers: this.headers() });
+  }
+
   private async postJSON<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: this.headers({ "content-type": "application/json" }),
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`POST ${path} failed (${res.status})`);
@@ -74,7 +86,7 @@ export class GhostBackend {
   // --- Cross-device chat sync ---
 
   async listConversations(membershipId: string): Promise<SyncedThreadSummary[]> {
-    const res = await fetch(this.url(`/conversations?membership_id=${encodeURIComponent(membershipId)}`));
+    const res = await this.authedGet(`/conversations?membership_id=${encodeURIComponent(membershipId)}`);
     if (!res.ok) throw new Error(`list conversations failed (${res.status})`);
     return (await res.json()).threads;
   }
@@ -88,8 +100,8 @@ export class GhostBackend {
   }
 
   async getConversation(membershipId: string, id: string): Promise<SyncedThread> {
-    const res = await fetch(
-      this.url(`/conversations/${encodeURIComponent(id)}?membership_id=${encodeURIComponent(membershipId)}`),
+    const res = await this.authedGet(
+      `/conversations/${encodeURIComponent(id)}?membership_id=${encodeURIComponent(membershipId)}`,
     );
     if (!res.ok) throw new Error(`get conversation failed (${res.status})`);
     return (await res.json()).thread;
@@ -105,7 +117,7 @@ export class GhostBackend {
   async deleteConversation(membershipId: string, id: string): Promise<void> {
     await fetch(
       this.url(`/conversations/${encodeURIComponent(id)}?membership_id=${encodeURIComponent(membershipId)}`),
-      { method: "DELETE" },
+      { method: "DELETE", headers: this.headers() },
     );
   }
 
@@ -132,26 +144,27 @@ export class GhostBackend {
   voiceSocketURL(opts: { membershipId?: string; characterId?: string } = {}): string {
     const u = new URL(this.url("/ws/voice"));
     u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+    if (this.sessionToken) u.searchParams.set("session", this.sessionToken);
     if (opts.membershipId) u.searchParams.set("membership_id", opts.membershipId);
     if (opts.characterId) u.searchParams.set("character_id", opts.characterId);
     return u.toString();
   }
 
   async characters(membershipId: string): Promise<CharacterSummary[]> {
-    const res = await fetch(this.url(`/characters?membership_id=${encodeURIComponent(membershipId)}`));
+    const res = await this.authedGet(`/characters?membership_id=${encodeURIComponent(membershipId)}`);
     if (!res.ok) throw new Error(`characters request failed (${res.status})`);
     return res.json();
   }
 
   async profileSummary(membershipId: string): Promise<string> {
-    const res = await fetch(this.url(`/profile/summary?membership_id=${encodeURIComponent(membershipId)}`));
+    const res = await this.authedGet(`/profile/summary?membership_id=${encodeURIComponent(membershipId)}`);
     if (!res.ok) throw new Error(`profile request failed (${res.status})`);
     const data = (await res.json()) as { summary: string };
     return data.summary;
   }
 
   async activitySummary(membershipId: string): Promise<ActivitySummary> {
-    const res = await fetch(this.url(`/activity/summary?membership_id=${encodeURIComponent(membershipId)}`));
+    const res = await this.authedGet(`/activity/summary?membership_id=${encodeURIComponent(membershipId)}`);
     if (!res.ok) throw new Error(`activity request failed (${res.status})`);
     return res.json();
   }
