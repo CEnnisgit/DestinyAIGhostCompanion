@@ -26,6 +26,10 @@ struct LoreCodexView: View {
             .searchable(text: $query, prompt: "Search the Codex")
             .onChange(of: query) { _, value in runSearch(value) }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { shuffle() } label: { Image(systemName: "sparkles") }
+                        .accessibilityLabel("Surprise me")
+                }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
             .tint(GhostTheme.accent)
@@ -110,6 +114,17 @@ struct LoreCodexView: View {
         loading = true
         defer { loading = false }
         entries = (try? await backend.loreBrowse(category: category)) ?? []
+    }
+
+    private func shuffle() {
+        activeCategory = nil
+        query = ""
+        Task {
+            guard let backend else { return }
+            loading = true
+            defer { loading = false }
+            entries = (try? await backend.loreRandom()) ?? []
+        }
     }
 
     private func runSearch(_ q: String) {

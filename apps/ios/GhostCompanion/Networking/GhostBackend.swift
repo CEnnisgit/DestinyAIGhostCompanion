@@ -49,6 +49,11 @@ struct GhostBackend {
         try await getJSON([LoreEntry].self, path: "lore/search", query: [URLQueryItem(name: "q", value: query)])
     }
 
+    /// `GET /lore/random?n=...` → random entries for discovery.
+    func loreRandom(n: Int = 8) async throws -> [LoreEntry] {
+        try await getJSON([LoreEntry].self, path: "lore/random", query: [URLQueryItem(name: "n", value: String(n))])
+    }
+
     private func getJSON<T: Decodable>(_ type: T.Type, path: String, query: [URLQueryItem]) async throws -> T {
         var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }

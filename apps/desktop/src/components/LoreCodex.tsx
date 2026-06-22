@@ -39,6 +39,17 @@ export function LoreCodex({ onClose }: { onClose: () => void }) {
       .finally(() => setLoading(false));
   };
 
+  const shuffle = () => {
+    setActive(null);
+    setQuery("");
+    setLoading(true);
+    backend
+      .loreRandom(8)
+      .then(setEntries)
+      .catch(() => setEntries([]))
+      .finally(() => setLoading(false));
+  };
+
   useEffect(() => {
     backend
       .loreCategories()
@@ -55,9 +66,12 @@ export function LoreCodex({ onClose }: { onClose: () => void }) {
       <div className="modal codex" onClick={(e) => e.stopPropagation()}>
         <div className="codex-head">
           <h3>Lore Codex</h3>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
-            <CloseIcon />
-          </button>
+          <div className="codex-head-actions">
+            <button className="btn ghost small" onClick={shuffle}>✦ Surprise me</button>
+            <button className="icon-btn" onClick={onClose} aria-label="Close">
+              <CloseIcon />
+            </button>
+          </div>
         </div>
 
         <input

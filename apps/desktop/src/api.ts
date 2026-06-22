@@ -73,4 +73,10 @@ export class GhostBackend {
     if (!res.ok) throw new Error(`lore search failed (${res.status})`);
     return res.json();
   }
+
+  async loreRandom(n = 6): Promise<LoreEntry[]> {
+    const res = await fetch(this.url(`/lore/random?n=${n}`));
+    if (!res.ok) throw new Error(`lore random failed (${res.status})`);
+    return res.json();
+  }
 }
