@@ -51,7 +51,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         </button>
 
         <p className="muted">Status: {g.health.toUpperCase()} · Use an HTTPS URL in production.</p>
-        <p className="muted small">Not affiliated with Bungie, Inc.</p>
+        <p className="muted small">
+          Ghost Companion is an unofficial, fan-made app — not affiliated with, endorsed by, or
+          sponsored by Bungie, Inc. Destiny is a trademark of Bungie, Inc.{" "}
+          <a href="https://ghostcompanion.app/privacy" target="_blank" rel="noreferrer">
+            Privacy Policy
+          </a>
+        </p>
 
         <button className="btn ghost" onClick={onClose}>
           Done

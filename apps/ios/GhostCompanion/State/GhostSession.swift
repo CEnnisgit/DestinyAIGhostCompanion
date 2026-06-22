@@ -35,7 +35,12 @@ final class GhostSession: ObservableObject {
     private var socket: URLSessionWebSocketTask?
 
     init() {
-        backendURLString = UserDefaults.standard.string(forKey: Self.urlKey) ?? "http://localhost:8080"
+        // Default backend: the build's `GhostBackendURL` (set to your production
+        // HTTPS endpoint before archiving), falling back to localhost for dev. A
+        // user's saved override (Settings) always takes precedence.
+        let configured = Bundle.main.object(forInfoDictionaryKey: "GhostBackendURL") as? String
+        let fallback = (configured?.isEmpty == false ? configured! : "http://localhost:8080")
+        backendURLString = UserDefaults.standard.string(forKey: Self.urlKey) ?? fallback
         var loaded = Self.loadConversations().sorted { $0.updatedAt > $1.updatedAt }
         if loaded.isEmpty { loaded = [Conversation()] }
         conversations = loaded

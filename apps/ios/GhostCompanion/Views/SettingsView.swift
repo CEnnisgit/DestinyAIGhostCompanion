@@ -75,9 +75,13 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("About") {
+                Section {
                     LabeledContent("Version", value: "1.0")
-                    LabeledContent("Not affiliated with Bungie, Inc.", value: "")
+                    Link("Privacy Policy", destination: URL(string: "https://ghostcompanion.app/privacy")!)
+                } header: {
+                    Text("About")
+                } footer: {
+                    Text("Ghost Companion is an unofficial, fan-made app. It is not affiliated with, endorsed by, or sponsored by Bungie, Inc. Destiny is a trademark of Bungie, Inc.")
                 }
             }
             .scrollContentBackground(.hidden)
