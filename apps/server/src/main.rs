@@ -10,8 +10,8 @@ use anyhow::Context;
 use sqlx::postgres::PgPoolOptions;
 
 use api::{
-    build_router, AppState, BungieActivityClient, BungieCareerClient, BungieIdentityClient,
-    BungieInventoryClient, BungieOAuthConfig, CharacterClient, OpenAiClient,
+    build_router, AppState, BungieActivityClient, BungieApiClient, BungieCareerClient,
+    BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig, CharacterClient, OpenAiClient,
 };
 use db::{
     EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync,
@@ -116,11 +116,17 @@ async fn main() -> anyhow::Result<()> {
     let activity_client = Arc::new(BungieActivityClient::new(
         http.clone(),
         oauth.api_key.clone(),
-        token_storage,
+        token_storage.clone(),
     ));
     let profile_saga = Arc::new(
         GuardianProfileSaga::new(career_client).with_activity(activity_client),
     );
+    // Generic authenticated Bungie read passthrough — any Platform GET (D2 + D1).
+    let bungie_api = Arc::new(BungieApiClient::new(
+        http.clone(),
+        oauth.api_key.clone(),
+        token_storage,
+    ));
 
     // --- Lore RAG (Phase 4E) ---
     // Always available: semantic search when embeddings are configured, keyword
@@ -198,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
         lore_saga,
         character_client,
         profile_saga,
+        bungie_api,
         lore_library,
         ws_dev_token,
     };
