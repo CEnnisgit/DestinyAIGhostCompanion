@@ -1,5 +1,6 @@
 //! `db` crate — outbound Postgres adapters for the Ghost Companion domain ports.
 
+pub mod d1_grimoire;
 pub mod embedding_client;
 pub mod grimoire_search;
 pub mod lore_import;
@@ -9,6 +10,7 @@ pub mod manifest_item_resolver;
 pub mod manifest_sync;
 pub mod postgres_token_storage;
 
+pub use d1_grimoire::fetch_d1_grimoire;
 pub use embedding_client::EmbeddingClient;
 pub use grimoire_search::GrimoireSearch;
 pub use lore_import::import_lore_dir;
