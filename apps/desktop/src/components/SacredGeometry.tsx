@@ -35,10 +35,10 @@ export function SacredBackground() {
   const cy = 300;
   const field = starfield(70);
   const rings = [150, 250, 360, 480, 620, 770];
-  const planets = [
-    ...orbit(cx, cy, 360, 6, 30, 12),
-    ...orbit(cx, cy, 480, 6, 0, 9),
-    ...orbit(cx, cy, 620, 6, 30, 7),
+  const orbits = [
+    { r: 360, count: 6, phase: 30, size: 13, cls: "orbit-a" },
+    { r: 480, count: 6, phase: 0, size: 10, cls: "orbit-b" },
+    { r: 620, count: 6, phase: 30, size: 8, cls: "orbit-c" },
   ];
 
   return (
@@ -59,10 +59,14 @@ export function SacredBackground() {
         <circle key={`ring${r}`} className="sg-ring" cx={cx} cy={cy} r={r} />
       ))}
 
-      {planets.map((p, i) => (
-        <g key={`planet${i}`}>
-          <circle className="sg-planet" cx={p.x} cy={p.y} r={p.size} fill="url(#planetGrad)" />
-          <circle className="sg-planet-rim" cx={p.x} cy={p.y} r={p.size} />
+      {orbits.map((o) => (
+        <g key={o.cls} className={`sg-orbit ${o.cls}`}>
+          {orbit(cx, cy, o.r, o.count, o.phase, o.size).map((p, i) => (
+            <g key={i}>
+              <circle className="sg-planet" cx={p.x} cy={p.y} r={p.size} fill="url(#planetGrad)" />
+              <circle className="sg-planet-rim" cx={p.x} cy={p.y} r={p.size} />
+            </g>
+          ))}
         </g>
       ))}
     </svg>

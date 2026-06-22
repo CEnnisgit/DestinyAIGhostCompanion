@@ -5,6 +5,14 @@ import SwiftUI
 /// the Ghost has room to breathe.
 struct SacredBackground: View {
     var body: some View {
+        TimelineView(.animation) { timeline in
+            drawing(time: timeline.date.timeIntervalSinceReferenceDate)
+        }
+        .allowsHitTesting(false)
+        .ignoresSafeArea()
+    }
+
+    private func drawing(time t: Double) -> some View {
         Canvas { ctx, size in
             let accent = GhostTheme.accent
             let c = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -33,14 +41,17 @@ struct SacredBackground: View {
                            with: .color(accent.opacity(0.15)), lineWidth: 0.7)
             }
 
-            // Planet-spheres placed symmetrically on orbital rings.
-            let orbits: [(frac: Double, count: Int, phase: Double, size: CGFloat)] = [
-                (0.42, 6, 30, 12), (0.56, 6, 0, 9), (0.72, 6, 30, 7),
+            // Planet-spheres placed symmetrically on orbital rings, drifting slowly.
+            let orbits: [(frac: Double, count: Int, phase: Double, size: CGFloat, speed: Double)] = [
+                (0.42, 6, 30, 13, 360.0 / 200.0),
+                (0.56, 6, 0, 10, -360.0 / 300.0),
+                (0.72, 6, 30, 8, 360.0 / 420.0),
             ]
             for orbit in orbits {
                 let radius = base * orbit.frac
+                let drift = t * orbit.speed
                 for i in 0..<orbit.count {
-                    let a = (Double(i) * 360.0 / Double(orbit.count) + orbit.phase) * .pi / 180
+                    let a = (Double(i) * 360.0 / Double(orbit.count) + orbit.phase + drift) * .pi / 180
                     let px = c.x + CGFloat(cos(a)) * radius
                     let py = c.y + CGFloat(sin(a)) * radius
                     let s = orbit.size
@@ -54,12 +65,10 @@ struct SacredBackground: View {
                              with: .radialGradient(grad,
                                                    center: CGPoint(x: px - s * 0.3, y: py - s * 0.35),
                                                    startRadius: 0, endRadius: s * 1.6))
-                    ctx.stroke(Path(ellipseIn: rect), with: .color(accent.opacity(0.28)), lineWidth: 0.6)
+                    ctx.stroke(Path(ellipseIn: rect), with: .color(accent.opacity(0.4)), lineWidth: 0.7)
                 }
             }
         }
-        .allowsHitTesting(false)
-        .ignoresSafeArea()
     }
 }
 
