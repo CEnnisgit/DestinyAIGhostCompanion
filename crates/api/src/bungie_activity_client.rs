@@ -15,6 +15,7 @@ use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde_json::Value;
 
+use db::ManifestActivityResolver;
 use domain::auth::membership::BungieMembershipId;
 use domain::auth::ports::TokenStoragePort;
 use domain::career::activity::{ActivityRecord, ActivitySummary, Game};
@@ -31,6 +32,8 @@ pub struct BungieActivityClient {
     http: reqwest::Client,
     api_key: String,
     token_store: Arc<dyn TokenStoragePort>,
+    /// Local manifest mirror for offline activity-name resolution (preferred).
+    activity_resolver: Option<Arc<ManifestActivityResolver>>,
 }
 
 /// An activity parsed from a history response, before name resolution / fireteam.
@@ -57,7 +60,15 @@ impl BungieActivityClient {
             http,
             api_key: api_key.into(),
             token_store,
+            activity_resolver: None,
         }
+    }
+
+    /// Adds a local manifest mirror so D2 activity names resolve from the database
+    /// first (offline, no rate limit), falling back to the API only on a miss.
+    pub fn with_activity_resolver(mut self, resolver: Arc<ManifestActivityResolver>) -> Self {
+        self.activity_resolver = Some(resolver);
+        self
     }
 
     async fn get(&self, access_token: &str, url: &str) -> Result<Value, anyhow::Error> {
@@ -74,9 +85,15 @@ impl BungieActivityClient {
             .context("decoding Bungie response")
     }
 
-    /// Resolves a Destiny 2 activity hash to its display name via the manifest
-    /// entity endpoint. Falls back to `None` so the caller can use the mode.
+    /// Resolves a Destiny 2 activity hash to its display name. Prefers the local
+    /// manifest mirror (offline, no rate limit); falls back to the manifest
+    /// entity endpoint, then `None` so the caller can use the mode label.
     async fn activity_name(&self, access_token: &str, hash: i64) -> Option<String> {
+        if let Some(resolver) = &self.activity_resolver {
+            if let Some(name) = resolver.name(hash).await {
+                return Some(name);
+            }
+        }
         let url =
             format!("{PLATFORM_BASE}/Destiny2/Manifest/DestinyActivityDefinition/{hash}/");
         let body = self.get(access_token, &url).await.ok()?;

@@ -209,8 +209,38 @@ impl ManifestSync {
             lore += 1;
         }
 
+        // Activity definitions — so activity hashes (from a player's history)
+        // resolve to names locally, with no per-hash API call.
+        let activity_rows = sqlx::query("SELECT id, json FROM DestinyActivityDefinition")
+            .fetch_all(&sqlite)
+            .await
+            .context("reading DestinyActivityDefinition")?;
+        let mut activities = 0u64;
+        for row in &activity_rows {
+            let Some((hash, def)) = decode_def(row) else { continue };
+            let name = string_at(&def, &["displayProperties", "name"]);
+            if name.is_empty() {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO destiny_activities (hash, name, description, icon_path)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (hash) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    icon_path = EXCLUDED.icon_path",
+            )
+            .bind(hash)
+            .bind(&name)
+            .bind(opt_string_at(&def, &["displayProperties", "description"]))
+            .bind(opt_string_at(&def, &["displayProperties", "icon"]))
+            .execute(&self.pg)
+            .await?;
+            activities += 1;
+        }
+
         sqlite.close().await;
-        tracing::info!(items, lore, "loaded manifest definitions");
+        tracing::info!(items, lore, activities, "loaded manifest definitions");
         Ok(())
     }
 
