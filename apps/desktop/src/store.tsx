@@ -34,6 +34,7 @@ const STORE_KEY = "ghost.conversations";
 const URL_KEY = "ghost.backendURL";
 const MEMBER_KEY = "ghost.membershipId";
 const CHAR_KEY = "ghost.characterId";
+const SESSION_KEY = "ghost.sessionToken";
 const DEFAULT_URL = "http://localhost:8080";
 
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -109,6 +110,7 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   const [isAwaiting, setIsAwaiting] = useState(false);
   const [backendURL, setBackendURLState] = useState<string>(() => localStorage.getItem(URL_KEY) ?? DEFAULT_URL);
   const [membershipId, setMembershipId] = useState<string | null>(() => localStorage.getItem(MEMBER_KEY));
+  const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(() => localStorage.getItem(CHAR_KEY));
   const [profileSummary, setProfileSummary] = useState<string | null>(null);
@@ -121,7 +123,10 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   const characterRef = useRef(selectedCharacterId);
   characterRef.current = selectedCharacterId;
 
-  const backend = useMemo(() => new GhostBackend(backendURL), [backendURL]);
+  const backend = useMemo(
+    () => new GhostBackend(backendURL, sessionToken ?? undefined),
+    [backendURL, sessionToken],
+  );
 
   // Persist locally only when signed out; signed-in chats live on the server.
   useEffect(() => {
@@ -155,14 +160,23 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [membershipId, loadServerThreads]);
 
-  // Capture ?membership_id=... after an OAuth web redirect, then clean the URL.
+  // Capture ?membership_id=...&session=... after an OAuth web redirect, then
+  // clean the URL so the token isn't left in the address bar / history.
   useEffect(() => {
     const url = new URL(window.location.href);
     const mid = url.searchParams.get("membership_id");
+    const session = url.searchParams.get("session");
     if (mid) {
       localStorage.setItem(MEMBER_KEY, mid);
       setMembershipId(mid);
+    }
+    if (session) {
+      localStorage.setItem(SESSION_KEY, session);
+      setSessionToken(session);
+    }
+    if (mid || session) {
       url.searchParams.delete("membership_id");
+      url.searchParams.delete("session");
       window.history.replaceState({}, "", url.pathname + url.search);
     }
   }, []);
@@ -383,7 +397,9 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     localStorage.removeItem(MEMBER_KEY);
     localStorage.removeItem(CHAR_KEY);
+    localStorage.removeItem(SESSION_KEY);
     setMembershipId(null);
+    setSessionToken(null);
     setSelectedCharacterId(null);
     setCharacters([]);
     setProfileSummary(null);

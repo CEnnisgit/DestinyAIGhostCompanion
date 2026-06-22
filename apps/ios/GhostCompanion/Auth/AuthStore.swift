@@ -17,6 +17,7 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
 
     private let service = "com.cennis.ghostcompanion"
     private let account = "bungie.membership_id"
+    private let sessionAccount = "bungie.session_token"
     private let characterKey = "ghost.character_id"
     private let callbackScheme = "ghostcompanion"
     private var session: ASWebAuthenticationSession?
@@ -92,12 +93,18 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
             errorMessage = "Sign-in did not return a membership id."
             return
         }
+        // Persist the signed session token so every API call is authenticated.
+        if let token = components?.queryItems?.first(where: { $0.name == "session" })?.value,
+           !token.isEmpty {
+            KeychainStore.save(token, service: service, account: sessionAccount)
+        }
         KeychainStore.save(id, service: service, account: account)
         membershipID = id
     }
 
     func signOut() {
         KeychainStore.delete(service: service, account: account)
+        KeychainStore.delete(service: service, account: sessionAccount)
         membershipID = nil
         characters = []
         profileSummary = nil
