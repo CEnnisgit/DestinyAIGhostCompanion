@@ -147,9 +147,18 @@ async fn main() -> anyhow::Result<()> {
             oauth.api_key.clone(),
             EmbeddingClient::from_env(http.clone()),
         );
+        let grimoire_pool = pool.clone();
+        let grimoire_http = http.clone();
+        let grimoire_key = oauth.api_key.clone();
         tokio::spawn(async move {
             if let Err(err) = sync.sync_if_changed().await {
                 tracing::warn!(error = %err, "manifest sync failed");
+            }
+            // Also ingest the full Destiny 1 Grimoire from Bungie's D1 API.
+            match db::fetch_d1_grimoire(&grimoire_pool, &grimoire_http, &grimoire_key).await {
+                Ok(0) => {}
+                Ok(cards) => tracing::info!(cards, "ingested D1 Grimoire"),
+                Err(err) => tracing::warn!(error = %err, "D1 Grimoire ingest failed"),
             }
         });
     }
