@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { SettingsModal } from "./components/SettingsModal";
 import { LoreCodex } from "./components/LoreCodex";
+import { SacredBackground } from "./components/SacredGeometry";
 
 export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -14,6 +15,7 @@ export function App() {
   return (
     <GhostProvider>
       <div className="app">
+        <SacredBackground />
         <Sidebar open={menuOpen} onClose={() => setMenuOpen(false)} />
         <div className="main">
           <Header

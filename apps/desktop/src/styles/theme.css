@@ -34,6 +34,7 @@ body {
 .app {
   display: flex;
   height: 100%;
+  position: relative;
 }
 
 .main {
@@ -41,6 +42,90 @@ body {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* Sacred-geometry backdrop (Destiny director motif) */
+.sacred-bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.sg-grid {
+  stroke: var(--accent);
+  stroke-width: 0.6;
+  opacity: 0.08;
+}
+.sg-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.7;
+  opacity: 0.16;
+}
+.sg-spoke {
+  stroke: var(--accent);
+  stroke-width: 0.6;
+  opacity: 0.13;
+  stroke-dasharray: 1 7;
+}
+.sg-mandala {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.4;
+}
+.sg-mandala-core {
+  fill: var(--accent-bright);
+  opacity: 0.5;
+}
+
+/* Ghost rosette halo */
+.ghost-halo {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  display: grid;
+  place-items: center;
+}
+.halo-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.halo-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+.halo-ring.faint {
+  opacity: 0.22;
+  stroke-dasharray: 2 6;
+}
+.halo-tick {
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  opacity: 0.7;
+}
+.halo-spin {
+  transform-origin: 100px 100px;
+  animation: halo-rotate 48s linear infinite;
+}
+@keyframes halo-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.halo-center {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 10px rgba(70, 154, 249, 0.6));
 }
 
 /* Header */
