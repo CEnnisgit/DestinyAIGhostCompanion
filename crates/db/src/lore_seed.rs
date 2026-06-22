@@ -138,6 +138,30 @@ pub const SEED: &[(i64, &str, &str, &str)] = &[
     (4_200_000_091, "Weapons", "Thorn & The Last Word", "Twin legends of a duel. Thorn is the cursed hand cannon of the fallen Guardian Dredgen Yor; the Last Word was wielded by Shin Malphur, who avenged Yor's victims and ended him."),
     (4_200_000_092, "Weapons", "Ace of Spades", "Cayde-6's signature hand cannon, carried on by the Guardian in his memory after his murder."),
     (4_200_000_093, "Weapons", "Whisper of the Worm", "An Exotic sniper rifle born of the Hive Worm Gods, earned through a hidden and grueling trial."),
+
+    // ---- Lore Books (paraphrased summaries) ----
+    (4_200_000_094, "Lore Book", "The Books of Sorrow: The Sisters", "On the doomed gas giant Fundament, three Krill princesses — Aurash, Sathona, and Xi Ro — survived their world's drowning. Seeking why their gods had abandoned them, Aurash piloted a ship down toward Fundament's crushing core."),
+    (4_200_000_095, "Lore Book", "The Books of Sorrow: The Worm Gods' Bargain", "At Fundament's core the sisters found the imprisoned Worm Gods, who offered immortality and limitless power — at a price. Each sister must forever obey her own nature and feed the Worm within her through endless conquest, or be devoured by it. They accepted, and were remade."),
+    (4_200_000_096, "Lore Book", "The Books of Sorrow: The Taken King", "Reborn as Auryx, Savathun, and Xivu Arath, the sisters waged war across the stars and codified the Sword Logic — that existence belongs to the strong. Auryx journeyed to the edge of the universe, wrested the power to Take from a slain god, and returned as Oryx, the Taken King."),
+    (4_200_000_097, "Lore Book", "Marasenna (Awoken Origin)", "When the Collapse tore reality, humans caught in the rupture were reborn in the Distributary — a sunlit pocket world of near-immortality — as the first Awoken. Mara Sov and her brother Uldren rose to lead them, and Mara chose to forsake paradise and return her people to the harsh Sol system to take up the war against the Darkness."),
+    (4_200_000_098, "Lore Book", "Truth to Power", "A book of letters written in Savathun's deceiving voice that taunts and tempts the reader, blurring truth and lie. It hints at the nature of paracausality, the worm of ambition coiled within every powerful being, and Savathun's secret war against her own Worm God."),
+
+    // ---- Raids (paraphrased story summaries) ----
+    (4_200_000_099, "Raids", "Vault of Glass", "Beneath Venus, the fireteam of Kabr, Praedyth, and Pahanin breached the Vault to stop the Vex from mastering time itself. Kabr sacrificed his very being to forge the Aegis; only with that relic could later Guardians defeat Atheon, Time's Conflux."),
+    (4_200_000_100, "Raids", "Crota's End", "Guardians descended into the Moon's Hellmouth, crossed the chasm of the damned, and struck down Crota, Son of Oryx — using a sword reaved from his own Hive — answering the Great Disaster at last."),
+    (4_200_000_101, "Raids", "King's Fall", "Aboard the Dreadnaught, Guardians broke Oryx's defenses, climbed to his throne in the Ascendant realm, and killed the Taken King himself, ending his campaign of vengeance for Crota."),
+    (4_200_000_102, "Raids", "Wrath of the Machine", "The Fallen House of Devils' Splicers revived the Golden Age plague SIVA and built the war-mind Aksis. Guardians, carrying the legacy of the Iron Lords, brought the machine down beneath the Cosmodrome."),
+    (4_200_000_103, "Raids", "Last Wish", "In the Dreaming City, Guardians bargained with Riven, the last Ahamkara, and killed her — but her death-wish, twisted by Savathun, locked the City into its endless three-week curse."),
+    (4_200_000_104, "Raids", "Garden of Salvation", "Following a Vex signal into the Black Garden, Guardians confronted the Consecrated and Sanctified Minds — Vex that had reached out to touch the Darkness's Pyramid on the Moon."),
+    (4_200_000_105, "Raids", "Deep Stone Crypt", "On Europa, Guardians fought through Eramis's Fallen into Clovis Bray's hidden facility — the birthplace of the Exo — to stop a doomsday weapon and reckon with the Bray family's legacy."),
+    (4_200_000_106, "Raids", "Vow of the Disciple", "Within Savathun's Throne World, Guardians entered a sunken Pyramid and faced Rhulk, the first Disciple of the Witness, learning how the Witness bends whole worlds to its will."),
+    (4_200_000_107, "Raids", "Root of Nightmares", "Aboard a Pyramid grafted onto a captured Traveler near Neptune, Guardians faced Nezarec, the Final God of Pain, and severed the Witness's grip on the Light."),
+    (4_200_000_108, "Raids", "Salvation's Edge", "Deep within the Traveler's Pale Heart, Guardians launched a final assault on the Witness itself, fighting to deny the Final Shape to all of creation."),
+
+    // ---- More characters ----
+    (4_200_000_109, "Characters", "Kabr, Praedyth, and Pahanin", "The doomed fireteam who first breached the Vault of Glass. Kabr became one with the Vault to forge the Aegis; Praedyth was lost to Vex time; only Pahanin escaped, to warn others away."),
+    (4_200_000_110, "Characters", "Lord Felwinter", "A formidable Warlock of the Dark Age, once bound to the warlord Felwinter's Peak, whose name endures on the legendary shotgun Felwinter's Lie."),
+    (4_200_000_111, "Characters", "The Crow's Companion, Glint", "Glint is the Ghost who resurrected the reborn Uldren Sov as the Guardian called Crow — a gentle, hopeful counterpart to the dark deeds of the man's past life."),
 ];
 
 /// Upserts the curated seed into `destiny_lore`. Idempotent; leaves existing
