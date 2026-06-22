@@ -121,4 +121,42 @@ impl GenerativeAiPort for OpenAiClient {
         serde_json::from_str::<VoiceIntent>(content.trim())
             .with_context(|| format!("LLM output was not a valid VoiceIntent: {content}"))
     }
+
+    async fn converse(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+    ) -> Result<String, anyhow::Error> {
+        // Free-form: no response_format constraint — we want flowing prose back.
+        let body = json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_message },
+            ],
+        });
+
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let completion: ChatCompletionResponse = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("calling chat/completions")?
+            .error_for_status()
+            .context("chat/completions returned an error status")?
+            .json()
+            .await
+            .context("decoding chat/completions response")?;
+
+        completion
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("LLM returned no conversational reply"))
+    }
 }

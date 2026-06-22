@@ -24,6 +24,7 @@ use domain::auth::token::BungieOAuthToken;
 use domain::career::saga::GuardianProfileSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
+use domain::voice_ai::conversation::ConversationSaga;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
 use crate::bungie_character_client::{CharacterClient, CharacterSummary};
@@ -85,6 +86,8 @@ pub struct AppState {
     pub http: reqwest::Client,
     /// Voice command orchestrator; `None` when no LLM is configured (server still boots).
     pub voice_saga: Option<Arc<VoiceCommandSaga>>,
+    /// Free-form conversational Ghost (lore + dossier grounded); `None` without an LLM.
+    pub conversation_saga: Option<Arc<ConversationSaga>>,
     /// Inventory transaction engine (equip/transfer/vault/postmaster).
     pub equip_saga: Arc<EquipItemSaga>,
     /// Lore RAG retrieval; `None` when no embeddings provider is configured.
@@ -108,6 +111,8 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/auth/callback", get(callback))
         .route("/characters", get(characters))
         .route("/profile/summary", get(profile_summary))
+        .route("/activity/summary", get(activity_summary))
+        .route("/chat", axum::routing::post(chat))
         .route("/lore", get(lore))
         .route("/lore/categories", get(lore_categories))
         .route("/lore/browse", get(lore_browse))
@@ -174,6 +179,58 @@ async fn profile_summary(
         Err(message) => message,
     };
     Ok(Json(json!({ "summary": summary })))
+}
+
+/// `GET /activity/summary?membership_id=...` — recent activity history: what the
+/// Guardian played, when, completion, and the fireteam (D2 + D1). Includes a
+/// natural-language narrative for display.
+async fn activity_summary(
+    State(state): State<AppState>,
+    Query(params): Query<MembershipQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let membership = BungieMembershipId::new(params.membership_id).map_err(|e| anyhow::anyhow!(e))?;
+    let summary = state.profile_saga.activity(&membership).await;
+    Ok(Json(json!({
+        "narrative": summary.narrative(),
+        "recent": summary.recent,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatRequest {
+    message: String,
+    /// Optional: when present, the reply is grounded in this Guardian's career +
+    /// activity dossier so the Ghost speaks to what they've actually done.
+    membership_id: Option<String>,
+}
+
+/// `POST /chat` — free-form conversation with the Ghost. Body:
+/// `{ "message": "who is the Witness?", "membership_id": "..." }`. The reply is
+/// grounded in lore RAG and (when `membership_id` is given) the player's dossier.
+async fn chat(
+    State(state): State<AppState>,
+    Json(req): Json<ChatRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Some(conversation) = &state.conversation_saga else {
+        return Ok(Json(json!({
+            "reply": "The Ghost's voice is offline — no language model is configured.",
+        })));
+    };
+
+    // Pull the Guardian's career + activity context when we know who they are.
+    let context: Option<String> = match req.membership_id.as_deref() {
+        Some(id) if !id.trim().is_empty() => match BungieMembershipId::new(id.to_string()) {
+            Ok(membership) => state.profile_saga.full_context(&membership).await,
+            Err(_) => None,
+        },
+        _ => None,
+    };
+
+    let reply = match conversation.converse(&req.message, context.as_deref()).await {
+        Ok(reply) => reply,
+        Err(_) => "The Ghost faltered reaching for an answer. Try again in a moment.".to_string(),
+    };
+    Ok(Json(json!({ "reply": reply })))
 }
 
 #[derive(Debug, Deserialize)]

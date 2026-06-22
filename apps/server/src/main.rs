@@ -10,8 +10,8 @@ use anyhow::Context;
 use sqlx::postgres::PgPoolOptions;
 
 use api::{
-    build_router, AppState, BungieCareerClient, BungieIdentityClient, BungieInventoryClient,
-    BungieOAuthConfig, CharacterClient, OpenAiClient,
+    build_router, AppState, BungieActivityClient, BungieCareerClient, BungieIdentityClient,
+    BungieInventoryClient, BungieOAuthConfig, CharacterClient, OpenAiClient,
 };
 use db::{
     EmbeddingClient, GrimoireSearch, ManifestItemResolver, ManifestSync,
@@ -21,7 +21,9 @@ use domain::auth::saga::OAuthSessionSaga;
 use domain::career::saga::GuardianProfileSaga;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
+use domain::voice_ai::conversation::ConversationSaga;
 use domain::voice_ai::personalities::GhostPersonality;
+use domain::voice_ai::ports::GenerativeAiPort;
 use domain::voice_ai::saga::VoiceCommandSaga;
 
 const DEFAULT_PORT: &str = "8080";
@@ -107,9 +109,18 @@ async fn main() -> anyhow::Result<()> {
     let career_client = Arc::new(BungieCareerClient::new(
         http.clone(),
         oauth.api_key.clone(),
+        token_storage.clone(),
+    ));
+    // Activity history: what the Guardian has done in-game (raid dates, fireteams),
+    // across Destiny 2 and Destiny 1. Folded into the personalization dossier.
+    let activity_client = Arc::new(BungieActivityClient::new(
+        http.clone(),
+        oauth.api_key.clone(),
         token_storage,
     ));
-    let profile_saga = Arc::new(GuardianProfileSaga::new(career_client));
+    let profile_saga = Arc::new(
+        GuardianProfileSaga::new(career_client).with_activity(activity_client),
+    );
 
     // --- Lore RAG (Phase 4E) ---
     // Always available: semantic search when embeddings are configured, keyword
@@ -121,24 +132,29 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("lore RAG: keyword search (set EMBEDDING_API_KEY for semantic search)");
     }
     let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
+    // Shared as a lore-grounding source for the conversational Ghost too.
+    let lore_port: Arc<dyn domain::lore::ports::GrimoireDatabasePort> = grimoire.clone();
     let lore_saga = Some(Arc::new(LoreSaga::new(grimoire)));
     let lore_library = Arc::new(db::LoreLibrary::new(pool.clone()));
 
     // --- Voice AI (Phase 4C) ---
     // Built only when an LLM is configured; the server still boots without one
     // (the /ws/voice route then reports the feature as unavailable).
-    let voice_saga = match OpenAiClient::from_env(http.clone()) {
+    let personality = personality_from_env();
+    let (voice_saga, conversation_saga) = match OpenAiClient::from_env(http.clone()) {
         Some(client) => {
-            let primary = Arc::new(client);
+            let ai: Arc<dyn GenerativeAiPort> = Arc::new(client);
             // ADR-008 failover: a distinct fallback port can be wired here later.
-            let saga =
-                VoiceCommandSaga::new(primary, None, personality_from_env());
-            tracing::info!("voice AI enabled");
-            Some(Arc::new(saga))
+            let voice = VoiceCommandSaga::new(ai.clone(), None, personality);
+            // Free-form conversation, grounded in lore RAG + the Guardian dossier.
+            let conversation =
+                ConversationSaga::new(ai, Some(lore_port), personality);
+            tracing::info!("voice AI + conversational Ghost enabled");
+            (Some(Arc::new(voice)), Some(Arc::new(conversation)))
         }
         None => {
             tracing::warn!("voice AI disabled — set LLM_API_KEY/OPENAI_API_KEY to enable /ws/voice");
-            None
+            (None, None)
         }
     };
     let ws_dev_token = std::env::var("GHOST_WS_DEV_TOKEN")
@@ -177,6 +193,7 @@ async fn main() -> anyhow::Result<()> {
         oauth,
         http,
         voice_saga,
+        conversation_saga,
         equip_saga,
         lore_saga,
         character_client,
