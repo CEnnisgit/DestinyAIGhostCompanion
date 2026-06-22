@@ -8,7 +8,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { GhostBackend, type CharacterSummary } from "./api";
+import {
+  GhostBackend,
+  type CharacterSummary,
+  type SyncedMessage,
+  type SyncedThreadSummary,
+} from "./api";
 
 export type Role = "guardian" | "ghost";
 export interface ChatMessage {
@@ -37,6 +42,20 @@ const newConversation = (): Conversation => ({
   title: "New Conversation",
   messages: [],
   updatedAt: Date.now(),
+});
+
+// Server (synced) → local view-model converters.
+const summaryToConversation = (t: SyncedThreadSummary): Conversation => ({
+  id: t.id,
+  title: t.title,
+  messages: [],
+  updatedAt: Date.parse(t.updated_at) || Date.now(),
+});
+const syncedToMessage = (m: SyncedMessage): ChatMessage => ({
+  id: m.id,
+  role: m.role,
+  text: m.text,
+  intent: m.intent ?? undefined,
 });
 
 function loadConversations(): Conversation[] {
@@ -104,9 +123,37 @@ export function GhostProvider({ children }: { children: ReactNode }) {
 
   const backend = useMemo(() => new GhostBackend(backendURL), [backendURL]);
 
+  // Persist locally only when signed out; signed-in chats live on the server.
   useEffect(() => {
-    localStorage.setItem(STORE_KEY, JSON.stringify(conversations));
-  }, [conversations]);
+    if (!membershipId) localStorage.setItem(STORE_KEY, JSON.stringify(conversations));
+  }, [conversations, membershipId]);
+
+  // When signed in, conversations sync from the server (cross-device). Loads the
+  // thread list; messages are fetched lazily on selection.
+  const loadServerThreads = useCallback(async () => {
+    const mid = membershipRef.current;
+    if (!mid) return;
+    try {
+      const threads = await backend.listConversations(mid);
+      if (threads.length) {
+        const convos = threads.map(summaryToConversation);
+        setConversations(convos);
+        setSelectedId((cur) => (convos.some((c) => c.id === cur) ? cur : convos[0].id));
+      } else {
+        // No server threads yet: start a fresh one on the server.
+        const created = await backend.createConversation(mid);
+        setConversations([summaryToConversation(created)]);
+        setSelectedId(created.id);
+      }
+    } catch {
+      /* backend unreachable — keep whatever is on screen */
+    }
+  }, [backend]);
+
+  useEffect(() => {
+    if (membershipId) void loadServerThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [membershipId, loadServerThreads]);
 
   // Capture ?membership_id=... after an OAuth web redirect, then clean the URL.
   useEffect(() => {
@@ -217,13 +264,36 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+
+      const isNew = (c: Conversation) => c.messages.length === 0 && c.title === "New Conversation";
       updateSelected((c) => {
-        if (c.messages.length === 0 && c.title === "New Conversation") {
-          c.title = trimmed.slice(0, 40);
-        }
+        if (isNew(c)) c.title = trimmed.slice(0, 40);
         c.messages.push({ id: uid(), role: "guardian", text: trimmed });
       });
 
+      const mid = membershipRef.current;
+      // Signed in: go over HTTP /chat so the server persists the turn and the
+      // conversation syncs across devices (and the reply is game-data grounded).
+      if (mid) {
+        const threadId = selectedIdRef.current;
+        setIsAwaiting(true);
+        backend
+          .chat(trimmed, mid, threadId)
+          .then((reply) => {
+            updateSelected((c) => {
+              c.messages.push({ id: uid(), role: "ghost", text: reply, intent: "conversation" });
+            });
+          })
+          .catch(() => {
+            updateSelected((c) => {
+              c.messages.push({ id: uid(), role: "ghost", text: "The Ghost is unreachable right now.", intent: "error" });
+            });
+          })
+          .finally(() => setIsAwaiting(false));
+        return;
+      }
+
+      // Signed out: ephemeral local chat over the WebSocket.
       const payload = JSON.stringify({ text: trimmed });
       const ws = ensureSocket();
       setIsAwaiting(true);
@@ -233,10 +303,23 @@ export function GhostProvider({ children }: { children: ReactNode }) {
         ws.addEventListener("open", () => ws.send(payload), { once: true });
       }
     },
-    [ensureSocket, updateSelected],
+    [backend, ensureSocket, updateSelected],
   );
 
   const startConversation = useCallback(() => {
+    setIsAwaiting(false);
+    const mid = membershipRef.current;
+    if (mid) {
+      // Create the thread on the server so it exists on every device.
+      backend
+        .createConversation(mid)
+        .then((thread) => {
+          setConversations((prev) => [summaryToConversation(thread), ...prev]);
+          setSelectedId(thread.id);
+        })
+        .catch(() => {});
+      return;
+    }
     setConversations((prev) => {
       const current = prev.find((c) => c.id === selectedIdRef.current);
       if (current && current.messages.length === 0) return prev;
@@ -244,22 +327,44 @@ export function GhostProvider({ children }: { children: ReactNode }) {
       setSelectedId(convo.id);
       return [convo, ...prev];
     });
-    setIsAwaiting(false);
-  }, []);
+  }, [backend]);
 
-  const selectConversation = useCallback((id: string) => {
-    setSelectedId(id);
-    setIsAwaiting(false);
-  }, []);
+  const selectConversation = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      setIsAwaiting(false);
+      // Lazily fetch this thread's messages from the server when synced.
+      const mid = membershipRef.current;
+      const existing = conversations.find((c) => c.id === id);
+      if (mid && existing && existing.messages.length === 0) {
+        backend
+          .getConversation(mid, id)
+          .then((thread) => {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === id ? { ...c, title: thread.title, messages: thread.messages.map(syncedToMessage) } : c,
+              ),
+            );
+          })
+          .catch(() => {});
+      }
+    },
+    [backend, conversations],
+  );
 
-  const deleteConversation = useCallback((id: string) => {
-    setConversations((prev) => {
-      let next = prev.filter((c) => c.id !== id);
-      if (next.length === 0) next = [newConversation()];
-      if (!next.some((c) => c.id === selectedIdRef.current)) setSelectedId(next[0].id);
-      return next;
-    });
-  }, []);
+  const deleteConversation = useCallback(
+    (id: string) => {
+      const mid = membershipRef.current;
+      if (mid) void backend.deleteConversation(mid, id);
+      setConversations((prev) => {
+        let next = prev.filter((c) => c.id !== id);
+        if (next.length === 0) next = [newConversation()];
+        if (!next.some((c) => c.id === selectedIdRef.current)) setSelectedId(next[0].id);
+        return next;
+      });
+    },
+    [backend],
+  );
 
   const setBackendURL = useCallback((url: string) => {
     const trimmed = url.trim();
@@ -282,6 +387,10 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     setSelectedCharacterId(null);
     setCharacters([]);
     setProfileSummary(null);
+    // Drop the synced threads from view and fall back to local conversations.
+    const local = loadConversations();
+    setConversations(local);
+    setSelectedId(local[0].id);
   }, []);
 
   const messages = conversations.find((c) => c.id === selectedId)?.messages ?? [];

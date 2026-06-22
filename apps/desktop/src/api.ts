@@ -33,11 +33,91 @@ export interface ActivitySummary {
   recent: ActivityRecord[];
 }
 
+export interface SyncedThreadSummary {
+  id: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface SyncedMessage {
+  id: string;
+  role: "guardian" | "ghost";
+  text: string;
+  intent?: string | null;
+  created_at: string;
+}
+
+export interface SyncedThread {
+  id: string;
+  title: string;
+  updated_at: string;
+  messages: SyncedMessage[];
+}
+
 export class GhostBackend {
   constructor(public baseURL: string) {}
 
   private url(path: string): string {
     return new URL(path, this.baseURL).toString();
+  }
+
+  private async postJSON<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(this.url(path), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`POST ${path} failed (${res.status})`);
+    return res.json();
+  }
+
+  // --- Cross-device chat sync ---
+
+  async listConversations(membershipId: string): Promise<SyncedThreadSummary[]> {
+    const res = await fetch(this.url(`/conversations?membership_id=${encodeURIComponent(membershipId)}`));
+    if (!res.ok) throw new Error(`list conversations failed (${res.status})`);
+    return (await res.json()).threads;
+  }
+
+  async createConversation(membershipId: string, title?: string): Promise<SyncedThreadSummary> {
+    const data = await this.postJSON<{ thread: SyncedThreadSummary }>("/conversations", {
+      membership_id: membershipId,
+      title,
+    });
+    return data.thread;
+  }
+
+  async getConversation(membershipId: string, id: string): Promise<SyncedThread> {
+    const res = await fetch(
+      this.url(`/conversations/${encodeURIComponent(id)}?membership_id=${encodeURIComponent(membershipId)}`),
+    );
+    if (!res.ok) throw new Error(`get conversation failed (${res.status})`);
+    return (await res.json()).thread;
+  }
+
+  async renameConversation(membershipId: string, id: string, title: string): Promise<void> {
+    await this.postJSON(`/conversations/${encodeURIComponent(id)}`, {
+      membership_id: membershipId,
+      title,
+    }).catch(() => {});
+  }
+
+  async deleteConversation(membershipId: string, id: string): Promise<void> {
+    await fetch(
+      this.url(`/conversations/${encodeURIComponent(id)}?membership_id=${encodeURIComponent(membershipId)}`),
+      { method: "DELETE" },
+    );
+  }
+
+  /// Sends a chat message; when conversationId is given the server persists the
+  /// turn (so it syncs across devices) and grounds the reply in live game data.
+  async chat(message: string, membershipId?: string, conversationId?: string): Promise<string> {
+    const data = await this.postJSON<{ reply: string }>("/chat", {
+      message,
+      membership_id: membershipId,
+      conversation_id: conversationId,
+    });
+    return data.reply;
   }
 
   async health(): Promise<boolean> {
