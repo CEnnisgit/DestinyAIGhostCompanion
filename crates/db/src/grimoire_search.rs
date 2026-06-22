@@ -33,7 +33,7 @@ impl GrimoireSearch {
             SELECT name, description
             FROM destiny_lore
             WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> $1
+            ORDER BY (source = 'curated') ASC, embedding <=> $1
             LIMIT $2
             "#,
         )
@@ -57,7 +57,8 @@ impl GrimoireSearch {
                 SELECT name, description
                 FROM destiny_lore, to_tsquery('english', $1) AS q
                 WHERE to_tsvector('english', name || ' ' || COALESCE(description, '')) @@ q
-                ORDER BY ts_rank(to_tsvector('english', name || ' ' || COALESCE(description, '')), q) DESC
+                ORDER BY (source = 'curated') ASC,
+                         ts_rank(to_tsvector('english', name || ' ' || COALESCE(description, '')), q) DESC
                 LIMIT $2
                 "#,
             )
@@ -77,7 +78,7 @@ impl GrimoireSearch {
             SELECT name, description
             FROM destiny_lore
             WHERE name ILIKE $1 OR description ILIKE $1
-            ORDER BY (name ILIKE $1) DESC, length(name) ASC
+            ORDER BY (source = 'curated') ASC, (name ILIKE $1) DESC, length(name) ASC
             LIMIT $2
             "#,
         )

@@ -49,11 +49,13 @@ pub async fn fetch_d1_grimoire(
     let mut count = 0u64;
     for card in &cards {
         sqlx::query(
-            "INSERT INTO destiny_lore (hash, name, description, category) VALUES ($1, $2, $3, $4)
+            "INSERT INTO destiny_lore (hash, name, description, category, source)
+             VALUES ($1, $2, $3, $4, 'bungie')
              ON CONFLICT (hash) DO UPDATE SET
                 name = EXCLUDED.name,
                 description = EXCLUDED.description,
                 category = EXCLUDED.category,
+                source = 'bungie',
                 embedding = CASE WHEN destiny_lore.description <> EXCLUDED.description
                                  THEN NULL ELSE destiny_lore.embedding END",
         )

@@ -64,11 +64,13 @@ pub async fn import_lore_dir(pool: &PgPool, dir: impl AsRef<Path>) -> Result<u64
             }
             let category = item.category.unwrap_or_else(|| "Imported".to_string());
             sqlx::query(
-                "INSERT INTO destiny_lore (hash, name, description, category) VALUES ($1, $2, $3, $4)
+                "INSERT INTO destiny_lore (hash, name, description, category, source)
+                 VALUES ($1, $2, $3, $4, 'import')
                  ON CONFLICT (hash) DO UPDATE SET
                     name = EXCLUDED.name,
                     description = EXCLUDED.description,
                     category = EXCLUDED.category,
+                    source = 'import',
                     embedding = CASE WHEN destiny_lore.description <> EXCLUDED.description
                                      THEN NULL ELSE destiny_lore.embedding END",
             )
