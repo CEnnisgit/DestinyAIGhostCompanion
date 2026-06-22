@@ -9,6 +9,7 @@ struct RootView: View {
     var body: some View {
         ZStack {
             GhostTheme.backgroundGradient.ignoresSafeArea()
+            SacredBackground()
             VStack(spacing: 0) {
                 header
                 VoiceChatView()

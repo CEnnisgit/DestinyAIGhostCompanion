@@ -125,7 +125,61 @@ body {
 .halo-center {
   position: relative;
   z-index: 1;
-  filter: drop-shadow(0 0 10px rgba(70, 154, 249, 0.6));
+  filter: drop-shadow(0 0 12px rgba(143, 205, 255, 0.75));
+}
+.sg-star {
+  fill: #cfe3ff;
+}
+.sg-seed {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.7;
+  opacity: 0.14;
+}
+.sg-star-seal {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.8;
+  opacity: 0.5;
+}
+.halo-bloom {
+  position: absolute;
+  width: 230px;
+  height: 230px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(143, 205, 255, 0.38) 0%,
+    rgba(70, 154, 249, 0.14) 36%,
+    transparent 70%
+  );
+  animation: bloom-pulse 5s ease-in-out infinite;
+}
+@keyframes bloom-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.07);
+  }
+}
+.halo-star {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.8;
+  opacity: 0.35;
+}
+.halo-spin-rev {
+  transform-origin: 100px 100px;
+  animation: halo-rotate-rev 60s linear infinite;
+}
+@keyframes halo-rotate-rev {
+  to {
+    transform: rotate(-360deg);
+  }
 }
 
 /* Header */
