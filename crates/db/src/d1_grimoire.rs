@@ -1,7 +1,10 @@
 //! Ingests the entire Destiny 1 Grimoire — the game's original lore system,
-//! retired from D2 — straight from Bungie's official D1 API. Together with the
-//! D2 manifest (`ManifestSync`) and the JSONL importer, this gives the Ghost the
-//! full sweep of Destiny's recorded lore.
+//! retired from D2. Two ways in:
+//!   - `fetch_d1_grimoire`: live from Bungie's official D1 API (needs an API key).
+//!   - `load_d1_grimoire_file`: from a downloaded JSON dump (no key, offline).
+//! Both reuse the same parser, so the Ghost can know all of D1's lore either way.
+
+use std::path::Path;
 
 use anyhow::{anyhow, Context};
 use serde_json::Value;
@@ -18,8 +21,8 @@ struct GrimoireCard {
     description: String,
 }
 
-/// Downloads the D1 Grimoire Definition and upserts every card into the lore
-/// corpus. Returns the number of cards ingested. Requires a real Bungie API key.
+/// Downloads the D1 Grimoire Definition from Bungie and ingests every card.
+/// Returns the number of cards ingested. Requires a real Bungie API key.
 pub async fn fetch_d1_grimoire(
     pool: &PgPool,
     http: &reqwest::Client,
@@ -36,18 +39,33 @@ pub async fn fetch_d1_grimoire(
         .await
         .context("decoding D1 Grimoire definition")?;
 
-    if body.get("ErrorCode").and_then(Value::as_i64) == Some(1) {
-        // ok
-    } else if body.get("ErrorCode").is_some() {
-        return Err(anyhow!(
-            "Bungie D1 Grimoire error: {}",
-            body.get("Message").and_then(Value::as_str).unwrap_or("unknown")
-        ));
+    if let Some(code) = body.get("ErrorCode").and_then(Value::as_i64) {
+        if code != 1 {
+            return Err(anyhow!(
+                "Bungie D1 Grimoire error: {}",
+                body.get("Message").and_then(Value::as_str).unwrap_or("unknown")
+            ));
+        }
     }
 
-    let cards = parse_grimoire(&body);
+    upsert_cards(pool, &parse_grimoire(&body)).await
+}
+
+/// Loads the D1 Grimoire from a local JSON dump (Bungie-D1-API shaped). No key
+/// needed. Missing file is fine (returns 0).
+pub async fn load_d1_grimoire_file(pool: &PgPool, path: impl AsRef<Path>) -> Result<u64, anyhow::Error> {
+    let path = path.as_ref();
+    if !path.is_file() {
+        return Ok(0);
+    }
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let body: Value = serde_json::from_str(&text).context("parsing D1 Grimoire JSON")?;
+    upsert_cards(pool, &parse_grimoire(&body)).await
+}
+
+async fn upsert_cards(pool: &PgPool, cards: &[GrimoireCard]) -> Result<u64, anyhow::Error> {
     let mut count = 0u64;
-    for card in &cards {
+    for card in cards {
         sqlx::query(
             "INSERT INTO destiny_lore (hash, name, description, category, source)
              VALUES ($1, $2, $3, $4, 'bungie')
@@ -70,13 +88,21 @@ pub async fn fetch_d1_grimoire(
     Ok(count)
 }
 
-/// Walks `Response.themeCollection[].pageCollection[].cardCollection[]` and flattens
-/// every card into a lore entry (intro + description, HTML stripped).
+/// Finds the `themeCollection` whether the JSON is the full API envelope
+/// (`Response.themeCollection`), the unwrapped definition (`themeCollection`),
+/// or a bare array of themes.
+fn themes_of(body: &Value) -> Option<&Vec<Value>> {
+    body.pointer("/Response/themeCollection")
+        .and_then(Value::as_array)
+        .or_else(|| body.get("themeCollection").and_then(Value::as_array))
+        .or_else(|| body.as_array())
+}
+
+/// Walks `themeCollection[].pageCollection[].cardCollection[]` and flattens every
+/// card into a lore entry (intro + description, HTML stripped).
 fn parse_grimoire(body: &Value) -> Vec<GrimoireCard> {
     let mut out = Vec::new();
-    let Some(themes) = body.pointer("/Response/themeCollection").and_then(Value::as_array) else {
-        return out;
-    };
+    let Some(themes) = themes_of(body) else { return out };
 
     for theme in themes {
         let theme_name = theme.get("themeName").and_then(Value::as_str).unwrap_or("Lore");
@@ -89,7 +115,7 @@ fn parse_grimoire(body: &Value) -> Vec<GrimoireCard> {
                 let name = card.get("cardName").and_then(Value::as_str).unwrap_or("").trim().to_string();
                 let intro = card.get("cardIntro").and_then(Value::as_str).unwrap_or("");
                 let desc = card.get("cardDescription").and_then(Value::as_str).unwrap_or("");
-                let description = strip_html(&[intro, desc].join("\n\n").trim().to_string());
+                let description = strip_html([intro, desc].join("\n\n").trim());
                 if name.is_empty() || description.is_empty() {
                     continue;
                 }
@@ -127,35 +153,40 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn parses_nested_grimoire_and_strips_html() {
-        let body = json!({
-            "Response": { "themeCollection": [
-                { "themeName": "Enemies", "pageCollection": [
-                    { "cardCollection": [
-                        { "cardId": 100101, "cardName": "The Darkness",
-                          "cardIntro": "Intro line.",
-                          "cardDescription": "A <b>great</b> Darkness &amp; its hunger." }
-                    ]}
+    fn sample() -> Value {
+        json!({ "themeCollection": [
+            { "themeName": "Enemies", "pageCollection": [
+                { "cardCollection": [
+                    { "cardId": 100101, "cardName": "The Darkness",
+                      "cardIntro": "Intro line.",
+                      "cardDescription": "A <b>great</b> Darkness &amp; its hunger." }
                 ]}
             ]}
-        });
-        let cards = parse_grimoire(&body);
+        ]})
+    }
+
+    #[test]
+    fn parses_unwrapped_and_wrapped() {
+        // Unwrapped (file dump) shape.
+        let cards = parse_grimoire(&sample());
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].id, 100101);
-        assert_eq!(cards[0].name, "The Darkness");
         assert_eq!(cards[0].category, "Grimoire · Enemies");
         assert!(cards[0].description.contains("A great Darkness & its hunger"));
         assert!(cards[0].description.contains("Intro line."));
+
+        // Wrapped (API envelope) shape.
+        let wrapped = json!({ "Response": sample() });
+        assert_eq!(parse_grimoire(&wrapped).len(), 1);
     }
 
     #[test]
     fn skips_cards_without_text() {
-        let body = json!({ "Response": { "themeCollection": [
+        let body = json!({ "themeCollection": [
             { "themeName": "X", "pageCollection": [ { "cardCollection": [
                 { "cardId": 1, "cardName": "", "cardDescription": "" }
             ]}]}
-        ]}});
+        ]});
         assert!(parse_grimoire(&body).is_empty());
     }
 }

@@ -66,6 +66,15 @@ async fn main() -> anyhow::Result<()> {
         Err(err) => tracing::warn!(error = %err, "external lore import failed"),
     }
 
+    // Load the full Destiny 1 Grimoire from a local JSON dump, if present (no key needed).
+    let d1_file = std::env::var("GHOST_D1_GRIMOIRE_FILE")
+        .unwrap_or_else(|_| "lore_import/d1_grimoire.json".into());
+    match db::load_d1_grimoire_file(&pool, &d1_file).await {
+        Ok(0) => {}
+        Ok(cards) => tracing::info!(cards, file = %d1_file, "loaded D1 Grimoire from file"),
+        Err(err) => tracing::warn!(error = %err, "D1 Grimoire file load failed"),
+    }
+
     // --- Adapters + domain saga ---
     let oauth = BungieOAuthConfig::from_env()
         .context("BUNGIE_CLIENT_ID / BUNGIE_CLIENT_SECRET / BUNGIE_API_KEY must be set")?;
