@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useGhost, type ChatMessage } from "../store";
 import { GhostMark } from "./GhostMark";
+import { GhostHalo } from "./SacredGeometry";
 import { Composer } from "./Composer";
 
 const SUGGESTIONS = [
@@ -59,7 +60,7 @@ export function ChatView() {
         <div className="column">
           {messages.length === 0 && !isAwaiting && (
             <div className="empty">
-              <GhostMark size={68} glow />
+              <GhostHalo />
               <h2>Eyes up, Guardian.</h2>
               <p>{profileSummary ?? "Ask me to manage your gear or dig into Destiny lore."}</p>
               <div className="suggestions">
