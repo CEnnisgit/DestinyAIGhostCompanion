@@ -7,10 +7,11 @@
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use domain::voice_ai::intent::VoiceIntent;
 use domain::voice_ai::ports::GenerativeAiPort;
+use domain::voice_ai::tools::{AiTurn, ConversationItem, ToolCall, ToolSpec};
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -159,4 +160,100 @@ impl GenerativeAiPort for OpenAiClient {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("LLM returned no conversational reply"))
     }
+
+    async fn chat_turn(
+        &self,
+        items: &[ConversationItem],
+        tools: &[ToolSpec],
+    ) -> Result<AiTurn, anyhow::Error> {
+        let messages: Vec<Value> = items.iter().map(item_to_message).collect();
+        let mut body = json!({ "model": self.model, "messages": messages });
+        if !tools.is_empty() {
+            body["tools"] = Value::Array(tools.iter().map(spec_to_tool).collect());
+            body["tool_choice"] = json!("auto");
+        }
+
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let raw: Value = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("calling chat/completions (tools)")?
+            .error_for_status()
+            .context("chat/completions (tools) returned an error status")?
+            .json()
+            .await
+            .context("decoding chat/completions (tools) response")?;
+
+        let message = raw
+            .pointer("/choices/0/message")
+            .ok_or_else(|| anyhow!("LLM returned no choices"))?;
+
+        // Prefer tool calls when the model asked for them.
+        if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+            let parsed: Vec<ToolCall> = calls.iter().filter_map(parse_tool_call).collect();
+            if !parsed.is_empty() {
+                return Ok(AiTurn::ToolCalls(parsed));
+            }
+        }
+
+        let content = message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        Ok(AiTurn::Reply(content))
+    }
+}
+
+/// Serializes a domain `ConversationItem` into an OpenAI chat message.
+fn item_to_message(item: &ConversationItem) -> Value {
+    match item {
+        ConversationItem::System(text) => json!({ "role": "system", "content": text }),
+        ConversationItem::User(text) => json!({ "role": "user", "content": text }),
+        ConversationItem::Assistant { content, tool_calls } => json!({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": tool_calls.iter().map(|c| json!({
+                "id": c.id,
+                "type": "function",
+                "function": { "name": c.name, "arguments": c.arguments },
+            })).collect::<Vec<_>>(),
+        }),
+        ConversationItem::ToolResult { call_id, name, content } => json!({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "name": name,
+            "content": content,
+        }),
+    }
+}
+
+/// Serializes a domain `ToolSpec` into an OpenAI function-tool definition.
+fn spec_to_tool(spec: &ToolSpec) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": spec.name,
+            "description": spec.description,
+            "parameters": spec.parameters,
+        },
+    })
+}
+
+/// Parses one OpenAI `tool_calls[]` entry into a domain `ToolCall`.
+fn parse_tool_call(call: &Value) -> Option<ToolCall> {
+    let id = call.get("id").and_then(Value::as_str)?.to_string();
+    let function = call.get("function")?;
+    let name = function.get("name").and_then(Value::as_str)?.to_string();
+    let arguments = function
+        .get("arguments")
+        .and_then(Value::as_str)
+        .unwrap_or("{}")
+        .to_string();
+    Some(ToolCall { id, name, arguments })
 }

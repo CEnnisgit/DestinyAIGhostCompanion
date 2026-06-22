@@ -12,7 +12,7 @@ pub mod openai_client;
 pub mod websocket_handler;
 
 pub use bungie_activity_client::BungieActivityClient;
-pub use bungie_api_client::BungieApiClient;
+pub use bungie_api_client::{BungieApiClient, BungieToolExecutor};
 pub use bungie_character_client::CharacterClient;
 pub use bungie_career_client::BungieCareerClient;
 pub use bungie_identity_client::BungieIdentityClient;

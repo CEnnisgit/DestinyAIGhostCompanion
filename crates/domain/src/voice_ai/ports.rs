@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use super::intent::VoiceIntent;
+use super::tools::{AiTurn, ConversationItem, ToolSpec};
 
 /// Secondary Port (Driven): Represents a generic OpenAI-compatible text generation interface.
 /// Due to ADR 007, this abstracts away whether we are using Grok, Ollama, or OpenAI natively.
@@ -23,6 +24,19 @@ pub trait GenerativeAiPort: Send + Sync {
     ) -> Result<String, anyhow::Error> {
         Err(anyhow::anyhow!(
             "this AI adapter does not support free-form conversation"
+        ))
+    }
+
+    /// One turn of a tool-enabled conversation: given the running history and the
+    /// tools the model may call, returns either a final reply or tool calls to
+    /// execute. The default errors so non-tool adapters need not implement it.
+    async fn chat_turn(
+        &self,
+        _items: &[ConversationItem],
+        _tools: &[ToolSpec],
+    ) -> Result<AiTurn, anyhow::Error> {
+        Err(anyhow::anyhow!(
+            "this AI adapter does not support tool-calling"
         ))
     }
 }
