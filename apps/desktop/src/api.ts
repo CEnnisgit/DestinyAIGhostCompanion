@@ -148,6 +148,11 @@ export class GhostBackend {
     return this.url("/auth/login");
   }
 
+  /// Revoke this session server-side (best-effort) so the token can't be reused.
+  async logout(): Promise<void> {
+    await fetch(this.url("/auth/logout"), { method: "POST", headers: this.headers() }).catch(() => {});
+  }
+
   voiceSocketURL(opts: { membershipId?: string; characterId?: string } = {}): string {
     const u = new URL(this.url("/ws/voice"));
     u.protocol = u.protocol === "https:" ? "wss:" : "ws:";

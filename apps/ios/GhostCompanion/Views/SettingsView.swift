@@ -12,7 +12,7 @@ struct SettingsView: View {
                 Section("Bungie Account") {
                     if let membershipID = auth.membershipID {
                         LabeledContent("Membership ID", value: membershipID)
-                        Button("Sign Out", role: .destructive) { auth.signOut() }
+                        Button("Sign Out", role: .destructive) { auth.signOut(backendURLString: session.backendURLString) }
                     } else if auth.isAuthenticating {
                         HStack { ProgressView(); Text("Signing in…") }
                     } else {

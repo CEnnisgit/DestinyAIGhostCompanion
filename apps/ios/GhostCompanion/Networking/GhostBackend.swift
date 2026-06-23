@@ -40,6 +40,12 @@ struct GhostBackend {
     /// The backend URL that begins the Bungie OAuth flow.
     var loginURL: URL { baseURL.appendingPathComponent("auth/login") }
 
+    /// `POST /auth/logout` — revoke this session server-side (best-effort).
+    func logout() async {
+        let request = authed(baseURL.appendingPathComponent("auth/logout"), method: "POST")
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
     /// `GET /characters?membership_id=...` → the signed-in user's characters.
     func characters(membershipID: String) async throws -> [CharacterSummary] {
         var components = URLComponents(url: baseURL.appendingPathComponent("characters"), resolvingAgainstBaseURL: false)!

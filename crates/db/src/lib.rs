@@ -11,6 +11,7 @@ pub mod manifest_definition_resolver;
 pub mod manifest_item_resolver;
 pub mod manifest_sync;
 pub mod postgres_chat_store;
+pub mod postgres_session_revocation;
 pub mod postgres_token_storage;
 
 pub use d1_grimoire::{fetch_d1_grimoire, load_d1_grimoire_file};
@@ -24,4 +25,5 @@ pub use manifest_definition_resolver::{DefinitionEntry, ManifestDefinitionResolv
 pub use manifest_item_resolver::ManifestItemResolver;
 pub use manifest_sync::ManifestSync;
 pub use postgres_chat_store::PostgresChatStore;
+pub use postgres_session_revocation::PostgresSessionRevocationStore;
 pub use postgres_token_storage::PostgresTokenStorageAdapter;
