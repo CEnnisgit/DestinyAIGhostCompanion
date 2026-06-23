@@ -12,7 +12,7 @@ use sqlx::postgres::PgPoolOptions;
 use api::{
     build_router, AppState, BungieActivityClient, BungieApiClient, BungieCareerClient,
     BungieIdentityClient, BungieInventoryClient, BungieOAuthConfig, CharacterClient,
-    HmacSessionAuthority, OpenAiClient,
+    HmacSessionAuthority, OpenAiClient, RefreshingTokenStore,
 };
 use db::{
     EmbeddingClient, GrimoireSearch, ManifestActivityResolver, ManifestDefinitionResolver,
@@ -84,7 +84,17 @@ async fn main() -> anyhow::Result<()> {
         .context("BUNGIE_CLIENT_ID / BUNGIE_CLIENT_SECRET / BUNGIE_API_KEY must be set")?;
     let http = reqwest::Client::new();
 
-    let token_storage = Arc::new(PostgresTokenStorageAdapter::new(pool.clone()));
+    // Persist tokens in Postgres, but wrap the store so it transparently refreshes
+    // expired Bungie access tokens — otherwise every live-data call would start
+    // failing ~1 hour after login. All Bungie clients share this wrapped store.
+    let token_storage: Arc<dyn domain::auth::ports::TokenStoragePort> =
+        Arc::new(RefreshingTokenStore::new(
+            Arc::new(PostgresTokenStorageAdapter::new(pool.clone())),
+            http.clone(),
+            oauth.client_id.clone(),
+            oauth.client_secret.clone(),
+            oauth.api_key.clone(),
+        ));
     let identity_provider = Arc::new(BungieIdentityClient::new(
         http.clone(),
         oauth.api_key.clone(),
