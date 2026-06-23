@@ -103,6 +103,8 @@ pub struct AppState {
     pub profile_saga: Arc<GuardianProfileSaga>,
     /// Generic authenticated Bungie read passthrough (any Platform GET).
     pub bungie_api: Arc<crate::bungie_api_client::BungieApiClient>,
+    /// Local manifest mirror for naming definition hashes (Triumphs, activities…).
+    pub manifest_defs: Arc<db::ManifestDefinitionResolver>,
     /// Server-side conversation store so chats sync across the user's devices.
     pub chat_saga: Arc<ChatSyncSaga>,
     /// Mints/verifies session tokens (the authenticated owner of a request).
@@ -166,6 +168,7 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/profile/summary", get(profile_summary))
         .route("/activity/summary", get(activity_summary))
         .route("/bungie", get(bungie_passthrough))
+        .route("/manifest/define", get(manifest_define))
         .route(
             "/conversations",
             get(list_conversations).post(create_conversation),
@@ -373,6 +376,24 @@ async fn delete_conversation(
 }
 
 #[derive(Debug, Deserialize)]
+struct DefineQuery {
+    kind: String,
+    hash: i64,
+}
+
+/// `GET /manifest/define?kind=record&hash=...` — resolve a definition hash to its
+/// name + description from the local manifest mirror (public; no game data).
+async fn manifest_define(
+    State(state): State<AppState>,
+    Query(params): Query<DefineQuery>,
+) -> Result<Response, AppError> {
+    match state.manifest_defs.define(&params.kind, params.hash).await {
+        Some(entry) => Ok(Json(entry).into_response()),
+        None => Ok((StatusCode::NOT_FOUND, "definition not found").into_response()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct BungiePassthroughQuery {
     /// A Bungie Platform path, e.g. `/Platform/Destiny2/3/Profile/123/?components=200,900`.
     path: String,
@@ -434,7 +455,8 @@ async fn chat(
     let executor = crate::bungie_api_client::BungieToolExecutor::new(
         state.bungie_api.clone(),
         membership.clone(),
-    );
+    )
+    .with_definitions(state.manifest_defs.clone());
 
     let reply = match conversation
         .converse_with_tools(&req.message, context.as_deref(), Some(&executor))

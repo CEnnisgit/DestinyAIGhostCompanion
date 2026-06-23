@@ -17,6 +17,7 @@ use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde_json::Value;
 
+use db::ManifestDefinitionResolver;
 use domain::auth::membership::BungieMembershipId;
 use domain::auth::ports::TokenStoragePort;
 use domain::voice_ai::tools::{ToolCall, ToolExecutor, ToolSpec};
@@ -96,6 +97,8 @@ impl BungieApiClient {
 pub struct BungieToolExecutor {
     client: Arc<BungieApiClient>,
     membership_id: Option<BungieMembershipId>,
+    /// Local manifest mirror for naming definition hashes offline (optional).
+    definitions: Option<Arc<ManifestDefinitionResolver>>,
 }
 
 impl BungieToolExecutor {
@@ -103,14 +106,22 @@ impl BungieToolExecutor {
         Self {
             client,
             membership_id,
+            definitions: None,
         }
+    }
+
+    /// Adds the local definition resolver, enabling the `define_hash` tool so the
+    /// Ghost can name a raw hash (Triumph/activity/item/lore) without an API call.
+    pub fn with_definitions(mut self, definitions: Arc<ManifestDefinitionResolver>) -> Self {
+        self.definitions = Some(definitions);
+        self
     }
 }
 
 #[async_trait]
 impl ToolExecutor for BungieToolExecutor {
     fn specs(&self) -> Vec<ToolSpec> {
-        vec![ToolSpec {
+        let mut specs = vec![ToolSpec {
             name: "bungie_get".to_string(),
             description: "Fetch live Destiny data by performing an authenticated GET against a \
                 Bungie Platform path. Use this to answer questions about the Guardian's \
@@ -129,27 +140,69 @@ impl ToolExecutor for BungieToolExecutor {
                 },
                 "required": ["path"]
             }),
-        }]
+        }];
+
+        // Only advertise define_hash when the local manifest mirror is available.
+        if self.definitions.is_some() {
+            specs.push(ToolSpec {
+                name: "define_hash".to_string(),
+                description: "Resolve a raw Destiny definition hash to its name and description \
+                    from the local manifest (no API call). Use this to name hashes you get from \
+                    bungie_get — e.g. a Triumph/record hash from profile component 900, or an \
+                    activity hash. 'kind' is one of: record, activity, item, lore."
+                    .to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string", "enum": ManifestDefinitionResolver::KINDS },
+                        "hash": { "type": "integer", "description": "The definition hash." }
+                    },
+                    "required": ["kind", "hash"]
+                }),
+            });
+        }
+        specs
     }
 
     async fn run(&self, call: &ToolCall) -> Result<String, anyhow::Error> {
-        if call.name != "bungie_get" {
-            return Err(anyhow!("unknown tool: {}", call.name));
-        }
         let args: Value = serde_json::from_str(&call.arguments)
             .with_context(|| format!("bad tool arguments: {}", call.arguments))?;
-        let path = args
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("bungie_get requires a 'path' string"))?;
 
-        let body = self.client.get(self.membership_id.as_ref(), path).await?;
-        let mut text = body.to_string();
-        if text.len() > TOOL_RESULT_BUDGET {
-            text.truncate(TOOL_RESULT_BUDGET);
-            text.push_str("…(truncated)");
+        match call.name.as_str() {
+            "bungie_get" => {
+                let path = args
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("bungie_get requires a 'path' string"))?;
+                let body = self.client.get(self.membership_id.as_ref(), path).await?;
+                let mut text = body.to_string();
+                if text.len() > TOOL_RESULT_BUDGET {
+                    text.truncate(TOOL_RESULT_BUDGET);
+                    text.push_str("…(truncated)");
+                }
+                Ok(text)
+            }
+            "define_hash" => {
+                let definitions = self
+                    .definitions
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("definitions are not available"))?;
+                let kind = args
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("define_hash requires a 'kind'"))?;
+                // Accept the hash as a number or a numeric string.
+                let hash = args
+                    .get("hash")
+                    .and_then(|h| h.as_i64().or_else(|| h.as_str().and_then(|s| s.parse().ok())))
+                    .ok_or_else(|| anyhow!("define_hash requires an integer 'hash'"))?;
+                match definitions.define(kind, hash).await {
+                    Some(entry) => Ok(serde_json::to_string(&entry)?),
+                    None => Ok(format!("No {kind} definition found for hash {hash} (the manifest may not be ingested).")),
+                }
+            }
+            other => Err(anyhow!("unknown tool: {other}")),
         }
-        Ok(text)
     }
 }
 

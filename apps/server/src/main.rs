@@ -15,8 +15,8 @@ use api::{
     HmacSessionAuthority, OpenAiClient,
 };
 use db::{
-    EmbeddingClient, GrimoireSearch, ManifestActivityResolver, ManifestItemResolver, ManifestSync,
-    PostgresChatStore, PostgresTokenStorageAdapter,
+    EmbeddingClient, GrimoireSearch, ManifestActivityResolver, ManifestDefinitionResolver,
+    ManifestItemResolver, ManifestSync, PostgresChatStore, PostgresTokenStorageAdapter,
 };
 use domain::auth::saga::OAuthSessionSaga;
 use domain::chats::saga::ChatSyncSaga;
@@ -128,6 +128,8 @@ async fn main() -> anyhow::Result<()> {
         oauth.api_key.clone(),
         token_storage,
     ));
+    // Local manifest mirror for naming definition hashes (Triumphs, activities…).
+    let manifest_defs = Arc::new(ManifestDefinitionResolver::new(pool.clone()));
 
     // --- Lore RAG (Phase 4E) ---
     // Always available: semantic search when embeddings are configured, keyword
@@ -231,6 +233,7 @@ async fn main() -> anyhow::Result<()> {
         character_client,
         profile_saga,
         bungie_api,
+        manifest_defs,
         chat_saga,
         session,
         require_auth,
