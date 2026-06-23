@@ -28,6 +28,7 @@ pub struct HmacSessionAuthority {
 #[derive(Serialize, Deserialize)]
 struct Claims {
     sub: String,
+    iat: i64,
     exp: i64,
 }
 
@@ -59,6 +60,7 @@ impl SessionAuthority for HmacSessionAuthority {
     fn mint(&self, session: &Session) -> Result<String, anyhow::Error> {
         let claims = Claims {
             sub: session.membership_id.0.clone(),
+            iat: session.issued_at.timestamp(),
             exp: session.expires_at.timestamp(),
         };
         let payload = serde_json::to_vec(&claims).context("serializing session claims")?;
@@ -91,8 +93,13 @@ impl SessionAuthority for HmacSessionAuthority {
             .timestamp_opt(claims.exp, 0)
             .single()
             .ok_or_else(|| anyhow!("invalid session expiry"))?;
+        let issued_at: DateTime<Utc> = Utc
+            .timestamp_opt(claims.iat, 0)
+            .single()
+            .ok_or_else(|| anyhow!("invalid session issued-at"))?;
         let session = Session::new(
             BungieMembershipId::new(claims.sub).map_err(|e| anyhow!(e))?,
+            issued_at,
             expires_at,
         );
         if session.is_expired(Utc::now()) {
@@ -111,23 +118,33 @@ mod tests {
         BungieMembershipId::new("4611686018467260000").unwrap()
     }
 
+    fn session_lasting(secs: i64) -> Session {
+        let now = Utc::now();
+        Session::new(member(), now, now + Duration::seconds(secs))
+    }
+
     #[test]
     fn round_trips_a_valid_session() {
         let authority = HmacSessionAuthority::new(b"test-secret".to_vec());
-        let session = Session::new(member(), Utc::now() + Duration::days(30));
+        let session = session_lasting(60 * 60 * 24 * 30);
         let token = authority.mint(&session).unwrap();
         let verified = authority.verify(&token).unwrap();
         assert_eq!(verified.membership_id, session.membership_id);
+        assert_eq!(verified.issued_at.timestamp(), session.issued_at.timestamp());
     }
 
     #[test]
     fn rejects_a_tampered_payload() {
         let authority = HmacSessionAuthority::new(b"test-secret".to_vec());
-        let session = Session::new(member(), Utc::now() + Duration::days(30));
-        let token = authority.mint(&session).unwrap();
+        let token = authority.mint(&session_lasting(60 * 60)).unwrap();
 
         // Forge a different membership in the payload, keep the old signature.
-        let forged_claims = Claims { sub: "hacker".into(), exp: (Utc::now() + Duration::days(30)).timestamp() };
+        let now = Utc::now();
+        let forged_claims = Claims {
+            sub: "hacker".into(),
+            iat: now.timestamp(),
+            exp: (now + Duration::days(30)).timestamp(),
+        };
         let forged_payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&forged_claims).unwrap());
         let sig = token.split_once('.').unwrap().1;
         let forged = format!("{forged_payload}.{sig}");
@@ -138,18 +155,14 @@ mod tests {
     fn rejects_a_wrong_secret() {
         let signer = HmacSessionAuthority::new(b"secret-a".to_vec());
         let attacker = HmacSessionAuthority::new(b"secret-b".to_vec());
-        let token = signer
-            .mint(&Session::new(member(), Utc::now() + Duration::days(1)))
-            .unwrap();
+        let token = signer.mint(&session_lasting(60 * 60)).unwrap();
         assert!(attacker.verify(&token).is_err());
     }
 
     #[test]
     fn rejects_an_expired_session() {
         let authority = HmacSessionAuthority::new(b"test-secret".to_vec());
-        let token = authority
-            .mint(&Session::new(member(), Utc::now() - Duration::seconds(1)))
-            .unwrap();
+        let token = authority.mint(&session_lasting(-1)).unwrap();
         assert!(authority.verify(&token).is_err());
     }
 }

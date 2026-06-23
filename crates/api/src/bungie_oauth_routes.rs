@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use domain::auth::membership::BungieMembershipId;
-use domain::auth::ports::SessionAuthority;
+use domain::auth::ports::{SessionAuthority, SessionRevocationPort};
 use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::session::Session;
 use domain::auth::token::BungieOAuthToken;
@@ -109,6 +109,8 @@ pub struct AppState {
     pub chat_saga: Arc<ChatSyncSaga>,
     /// Mints/verifies session tokens (the authenticated owner of a request).
     pub session: Arc<dyn SessionAuthority>,
+    /// Per-user revocation cutoffs, so sign-out invalidates live tokens.
+    pub revocations: Arc<dyn SessionRevocationPort>,
     /// When true, requests MUST carry a valid session — the `membership_id`
     /// parameter dev fallback is disabled. Set in production.
     pub require_auth: bool,
@@ -128,7 +130,7 @@ impl AppState {
     /// Bearer <session>` always wins. Otherwise, only in dev (`require_auth ==
     /// false`) do we fall back to a client-supplied `membership_id` claim;
     /// in production a missing/invalid session is a 401.
-    pub fn resolve_owner(
+    pub async fn resolve_owner(
         &self,
         headers: &HeaderMap,
         claimed: Option<&str>,
@@ -138,6 +140,16 @@ impl AppState {
                 .session
                 .verify(&token)
                 .map_err(|_| AppError::unauthorized("invalid or expired session"))?;
+            // Honor revocation: a session issued before the user's cutoff (set on
+            // sign-out) is no longer valid even though its signature/expiry pass.
+            let cutoff = self
+                .revocations
+                .revoked_before(&session.membership_id)
+                .await
+                .unwrap_or(None);
+            if session.is_revoked(cutoff) {
+                return Err(AppError::unauthorized("session has been revoked"));
+            }
             return Ok(session.membership_id);
         }
         if !self.require_auth {
@@ -164,6 +176,7 @@ pub fn auth_router(state: AppState) -> Router {
     Router::new()
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
+        .route("/auth/logout", axum::routing::post(logout))
         .route("/characters", get(characters))
         .route("/profile/summary", get(profile_summary))
         .route("/activity/summary", get(activity_summary))
@@ -242,7 +255,7 @@ async fn profile_summary(
     headers: HeaderMap,
     Query(params): Query<MembershipQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let membership = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let membership = state.resolve_owner(&headers, params.membership_id.as_deref()).await?;
     let summary = match state.profile_saga.summarize(&membership).await {
         Ok(dossier) => dossier,
         Err(message) => message,
@@ -258,7 +271,7 @@ async fn activity_summary(
     headers: HeaderMap,
     Query(params): Query<MembershipQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let membership = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let membership = state.resolve_owner(&headers, params.membership_id.as_deref()).await?;
     let summary = state.profile_saga.activity(&membership).await;
     Ok(Json(json!({
         "narrative": summary.narrative(),
@@ -286,7 +299,7 @@ async fn list_conversations(
     headers: HeaderMap,
     Query(params): Query<OwnerQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref()).await?;
     let threads = state.chat_saga.list(&owner.0).await?;
     Ok(Json(json!({ "threads": threads })))
 }
@@ -303,7 +316,7 @@ async fn create_conversation(
     headers: HeaderMap,
     Json(req): Json<CreateConversation>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let owner = state.resolve_owner(&headers, req.membership_id.as_deref())?;
+    let owner = state.resolve_owner(&headers, req.membership_id.as_deref()).await?;
     let thread = state.chat_saga.create(&owner.0, req.title.as_deref()).await?;
     Ok(Json(json!({ "thread": thread })))
 }
@@ -315,7 +328,7 @@ async fn get_conversation(
     Path(id): Path<String>,
     Query(params): Query<OwnerQuery>,
 ) -> Result<Response, AppError> {
-    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref()).await?;
     match state.chat_saga.get(&owner.0, &id).await? {
         Some(thread) => Ok(Json(json!({ "thread": thread })).into_response()),
         None => Ok((StatusCode::NOT_FOUND, "conversation not found").into_response()),
@@ -337,7 +350,7 @@ async fn append_message(
     Path(id): Path<String>,
     Json(req): Json<AppendMessage>,
 ) -> Result<Response, AppError> {
-    let owner = state.resolve_owner(&headers, req.membership_id.as_deref())?;
+    let owner = state.resolve_owner(&headers, req.membership_id.as_deref()).await?;
     let message = NewMessage::new(req.role, req.text, req.intent);
     match state.chat_saga.append(&owner.0, &id, message).await? {
         Some(stored) => Ok(Json(json!({ "message": stored })).into_response()),
@@ -358,7 +371,7 @@ async fn rename_conversation(
     Path(id): Path<String>,
     Json(req): Json<RenameConversation>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let owner = state.resolve_owner(&headers, req.membership_id.as_deref())?;
+    let owner = state.resolve_owner(&headers, req.membership_id.as_deref()).await?;
     state.chat_saga.rename(&owner.0, &id, &req.title).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -370,7 +383,7 @@ async fn delete_conversation(
     Path(id): Path<String>,
     Query(params): Query<OwnerQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref()).await?;
     state.chat_saga.delete(&owner.0, &id).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -411,7 +424,7 @@ async fn bungie_passthrough(
     Query(params): Query<BungiePassthroughQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Reads are authenticated as the owner so a user only sees their own data.
-    let owner = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let owner = state.resolve_owner(&headers, params.membership_id.as_deref()).await?;
     let body = state.bungie_api.get(Some(&owner), &params.path).await?;
     Ok(Json(body))
 }
@@ -448,7 +461,7 @@ async fn chat(
     // Resolve the Guardian (when authenticated): used for the dossier context and
     // to bind the live-data tool. Anonymous chat (no auth, dev) is still allowed —
     // it just isn't personalized or persisted.
-    let membership = state.resolve_owner(&headers, req.membership_id.as_deref()).ok();
+    let membership = state.resolve_owner(&headers, req.membership_id.as_deref()).await.ok();
 
     let context: Option<String> = match &membership {
         Some(m) => state.profile_saga.full_context(m).await,
@@ -524,7 +537,7 @@ async fn characters(
     headers: HeaderMap,
     Query(params): Query<CharactersQuery>,
 ) -> Result<Json<Vec<CharacterSummary>>, AppError> {
-    let membership = state.resolve_owner(&headers, params.membership_id.as_deref())?;
+    let membership = state.resolve_owner(&headers, params.membership_id.as_deref()).await?;
     let characters = state.character_client.list_characters(&membership).await?;
     Ok(Json(characters))
 }
@@ -564,9 +577,11 @@ async fn callback(
     let membership_id = state.auth_saga.process_new_login(token).await?;
 
     // Mint a signed session the client presents on subsequent requests.
+    let now = Utc::now();
     let session = Session::new(
         membership_id.clone(),
-        Utc::now() + Duration::days(SESSION_TTL_DAYS),
+        now,
+        now + Duration::days(SESSION_TTL_DAYS),
     );
     let session_token = state.session.mint(&session)?;
     let session_q = urlencoding::encode(&session_token);
@@ -593,6 +608,18 @@ async fn callback(
 
     // 3. Fallback: JSON.
     Ok(Json(json!({ "membership_id": membership_id.0, "session": session_token })).into_response())
+}
+
+/// `POST /auth/logout` — revoke the caller's sessions. Requires a valid session
+/// (you prove who you are to revoke your own tokens); sets the revocation cutoff
+/// to now so every token issued before this moment stops working immediately.
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+    if let Ok(owner) = state.resolve_owner(&headers, None).await {
+        if let Err(err) = state.revocations.revoke_before(&owner, Utc::now()).await {
+            tracing::warn!(error = %err, "failed to record session revocation");
+        }
+    }
+    Json(json!({ "ok": true }))
 }
 
 #[derive(Debug, Deserialize)]

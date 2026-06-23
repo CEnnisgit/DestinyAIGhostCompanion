@@ -62,12 +62,22 @@ async fn voice_ws_handler(
     State(state): State<AppState>,
     Query(query): Query<WsAuthQuery>,
 ) -> Response {
-    // A valid session authenticates the connection and names the owner.
-    let session_member = query
-        .session
-        .as_deref()
-        .and_then(|t| state.session.verify(t).ok())
-        .map(|s| s.membership_id);
+    // A valid (non-revoked) session authenticates the connection and names the owner.
+    let session_member = match query.session.as_deref().and_then(|t| state.session.verify(t).ok()) {
+        Some(session) => {
+            let cutoff = state
+                .revocations
+                .revoked_before(&session.membership_id)
+                .await
+                .unwrap_or(None);
+            if session.is_revoked(cutoff) {
+                None
+            } else {
+                Some(session.membership_id)
+            }
+        }
+        None => None,
+    };
 
     // Production: a real session is mandatory. Dev: keep the legacy token gate.
     if state.require_auth {

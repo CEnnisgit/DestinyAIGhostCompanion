@@ -395,6 +395,8 @@ export function GhostProvider({ children }: { children: ReactNode }) {
   }, [backend]);
 
   const signOut = useCallback(() => {
+    // Revoke the session server-side before discarding the token locally.
+    void backend.logout();
     localStorage.removeItem(MEMBER_KEY);
     localStorage.removeItem(CHAR_KEY);
     localStorage.removeItem(SESSION_KEY);
@@ -407,7 +409,7 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     const local = loadConversations();
     setConversations(local);
     setSelectedId(local[0].id);
-  }, []);
+  }, [backend]);
 
   const messages = conversations.find((c) => c.id === selectedId)?.messages ?? [];
 

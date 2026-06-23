@@ -16,7 +16,8 @@ use api::{
 };
 use db::{
     EmbeddingClient, GrimoireSearch, ManifestActivityResolver, ManifestDefinitionResolver,
-    ManifestItemResolver, ManifestSync, PostgresChatStore, PostgresTokenStorageAdapter,
+    ManifestItemResolver, ManifestSync, PostgresChatStore, PostgresSessionRevocationStore,
+    PostgresTokenStorageAdapter,
 };
 use domain::auth::saga::OAuthSessionSaga;
 use domain::chats::saga::ChatSyncSaga;
@@ -174,6 +175,8 @@ async fn main() -> anyhow::Result<()> {
             ))
         }
     };
+    let revocations: Arc<dyn domain::auth::ports::SessionRevocationPort> =
+        Arc::new(PostgresSessionRevocationStore::new(pool.clone()));
 
     let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
     // Shared as a lore-grounding source for the conversational Ghost too.
@@ -246,6 +249,7 @@ async fn main() -> anyhow::Result<()> {
         manifest_defs,
         chat_saga,
         session,
+        revocations,
         require_auth,
         lore_library,
         ws_dev_token,

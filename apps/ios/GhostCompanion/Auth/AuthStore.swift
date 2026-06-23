@@ -102,7 +102,12 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
         membershipID = id
     }
 
-    func signOut() {
+    func signOut(backendURLString: String) {
+        // Revoke server-side first (the token is still in the Keychain), then
+        // discard local credentials.
+        if let backend = GhostBackend(baseURLString: backendURLString) {
+            Task { await backend.logout() }
+        }
         KeychainStore.delete(service: service, account: account)
         KeychainStore.delete(service: service, account: sessionAccount)
         membershipID = nil
