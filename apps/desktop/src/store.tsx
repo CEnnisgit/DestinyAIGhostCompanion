@@ -292,7 +292,7 @@ export function GhostProvider({ children }: { children: ReactNode }) {
         const threadId = selectedIdRef.current;
         setIsAwaiting(true);
         backend
-          .chat(trimmed, mid, threadId)
+          .chat(trimmed, mid, threadId, characterRef.current ?? undefined)
           .then((reply) => {
             updateSelected((c) => {
               c.messages.push({ id: uid(), role: "ghost", text: reply, intent: "conversation" });

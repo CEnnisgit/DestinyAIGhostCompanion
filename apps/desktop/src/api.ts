@@ -123,11 +123,18 @@ export class GhostBackend {
 
   /// Sends a chat message; when conversationId is given the server persists the
   /// turn (so it syncs across devices) and grounds the reply in live game data.
-  async chat(message: string, membershipId?: string, conversationId?: string): Promise<string> {
+  /// When characterId is given, the Ghost can do quick gear swaps on it.
+  async chat(
+    message: string,
+    membershipId?: string,
+    conversationId?: string,
+    characterId?: string,
+  ): Promise<string> {
     const data = await this.postJSON<{ reply: string }>("/chat", {
       message,
       membership_id: membershipId,
       conversation_id: conversationId,
+      character_id: characterId,
     });
     return data.reply;
   }

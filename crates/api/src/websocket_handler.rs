@@ -193,7 +193,7 @@ struct InboundVoice {
 async fn process_text(
     saga: &VoiceCommandSaga,
     conversation_saga: Option<&ConversationSaga>,
-    equip_saga: &EquipItemSaga,
+    equip_saga: &Arc<EquipItemSaga>,
     lore_saga: Option<&LoreSaga>,
     bungie_api: &Arc<crate::bungie_api_client::BungieApiClient>,
     manifest_defs: &Arc<db::ManifestDefinitionResolver>,
@@ -234,11 +234,16 @@ async fn process_text(
             if let (VoiceIntent::Lore { .. } | VoiceIntent::Unknown { .. }, Some(chat)) =
                 (&intent, conversation_saga)
             {
-                let executor = crate::bungie_api_client::BungieToolExecutor::new(
+                let mut executor = crate::bungie_api_client::BungieToolExecutor::new(
                     bungie_api.clone(),
                     equip_ctx.map(|c| c.membership_id.clone()),
                 )
                 .with_definitions(manifest_defs.clone());
+                // Quick gear changes target the connection's active character.
+                if let Some(ctx) = equip_ctx {
+                    executor = executor
+                        .with_writes(equip_saga.clone(), Some(ctx.character_id.clone()));
+                }
                 match chat
                     .converse_with_tools(&inbound.text, guardian_context, Some(&executor))
                     .await

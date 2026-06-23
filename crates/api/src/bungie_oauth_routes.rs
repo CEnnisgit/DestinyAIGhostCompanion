@@ -426,6 +426,9 @@ struct ChatRequest {
     /// message and the Ghost's reply are persisted so the conversation syncs
     /// across the user's devices.
     conversation_id: Option<String>,
+    /// The active character to target for any gear changes (equip/transfer). When
+    /// present (with a membership), the Ghost can do quick swaps from chat.
+    character_id: Option<String>,
 }
 
 /// `POST /chat` — free-form conversation with the Ghost. Body:
@@ -452,11 +455,15 @@ async fn chat(
         None => None,
     };
 
-    let executor = crate::bungie_api_client::BungieToolExecutor::new(
+    let mut executor = crate::bungie_api_client::BungieToolExecutor::new(
         state.bungie_api.clone(),
         membership.clone(),
     )
     .with_definitions(state.manifest_defs.clone());
+    // Enable quick gear changes when we know the active character.
+    if membership.is_some() && req.character_id.is_some() {
+        executor = executor.with_writes(state.equip_saga.clone(), req.character_id.clone());
+    }
 
     let reply = match conversation
         .converse_with_tools(&req.message, context.as_deref(), Some(&executor))

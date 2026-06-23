@@ -90,4 +90,112 @@ impl EquipItemSaga {
 
         Ok(format!("Successfully equipped {}.", item_name))
     }
+
+    /// Moves a named item to the vault (`to_vault = true`) or pulls it from the
+    /// vault onto the given character (`to_vault = false`). Returns a
+    /// conversational success or graceful error string.
+    pub async fn process_transfer(
+        &self,
+        membership_id: &BungieMembershipId,
+        item_name: &str,
+        to_vault: bool,
+        character_id: &str,
+    ) -> Result<String, String> {
+        let hash = self
+            .manifest_port
+            .resolve_item_hash(item_name)
+            .await
+            .map_err(|_| format!("I could not find a record for '{}' in the database.", item_name))?;
+
+        match self
+            .inventory_port
+            .transfer_item(membership_id, hash, to_vault, character_id)
+            .await
+        {
+            Ok(()) if to_vault => Ok(format!("Sent {} to the vault.", item_name)),
+            Ok(()) => Ok(format!("Pulled {} from the vault to your character.", item_name)),
+            Err(_) if to_vault => Err(format!("I couldn't vault '{}'. It may already be there, or your vault is full.", item_name)),
+            Err(_) => Err(format!("I couldn't pull '{}' from the vault. Your inventory may be full.", item_name)),
+        }
+    }
+
+    /// Pulls a named item out of the Postmaster onto the given character.
+    pub async fn process_pull_postmaster(
+        &self,
+        membership_id: &BungieMembershipId,
+        item_name: &str,
+        character_id: &str,
+    ) -> Result<String, String> {
+        let hash = self
+            .manifest_port
+            .resolve_item_hash(item_name)
+            .await
+            .map_err(|_| format!("I could not find a record for '{}' in the database.", item_name))?;
+
+        self.inventory_port
+            .pull_postmaster(membership_id, hash, character_id)
+            .await
+            .map(|()| format!("Rescued {} from the Postmaster.", item_name))
+            .map_err(|_| format!("Could not pull '{}' from the Postmaster — make sure you have space.", item_name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    /// Records the inventory calls made, so we can assert the saga drives the port.
+    #[derive(Default)]
+    struct SpyInventory {
+        calls: Mutex<Vec<String>>,
+    }
+    #[async_trait]
+    impl BungieInventoryPort for SpyInventory {
+        async fn locate_item(&self, _: &BungieMembershipId, _: DestinyItemHash) -> Result<ItemLocation, anyhow::Error> {
+            Ok(ItemLocation::Vault)
+        }
+        async fn transfer_item(&self, _: &BungieMembershipId, _: DestinyItemHash, to_vault: bool, character_id: &str) -> Result<(), anyhow::Error> {
+            self.calls.lock().unwrap().push(format!("transfer to_vault={to_vault} char={character_id}"));
+            Ok(())
+        }
+        async fn equip_item(&self, _: &BungieMembershipId, _: DestinyItemHash, _: &str) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+        async fn pull_postmaster(&self, _: &BungieMembershipId, _: DestinyItemHash, character_id: &str) -> Result<(), anyhow::Error> {
+            self.calls.lock().unwrap().push(format!("postmaster char={character_id}"));
+            Ok(())
+        }
+    }
+
+    struct StubManifest;
+    #[async_trait]
+    impl ManifestDatabasePort for StubManifest {
+        async fn resolve_item_hash(&self, _: &str) -> Result<DestinyItemHash, anyhow::Error> {
+            DestinyItemHash::new(3000).map_err(|e| anyhow::anyhow!(e))
+        }
+    }
+
+    fn member() -> BungieMembershipId {
+        BungieMembershipId::new("alice").unwrap()
+    }
+
+    #[tokio::test]
+    async fn transfer_to_vault_drives_the_port() {
+        let inv = Arc::new(SpyInventory::default());
+        let saga = EquipItemSaga::new(inv.clone(), Arc::new(StubManifest));
+        let msg = saga.process_transfer(&member(), "Sunshot", true, "char-1").await.unwrap();
+        assert!(msg.contains("vault"));
+        assert_eq!(inv.calls.lock().unwrap()[0], "transfer to_vault=true char=char-1");
+    }
+
+    #[tokio::test]
+    async fn pull_postmaster_drives_the_port() {
+        let inv = Arc::new(SpyInventory::default());
+        let saga = EquipItemSaga::new(inv.clone(), Arc::new(StubManifest));
+        let msg = saga.process_pull_postmaster(&member(), "Gjallarhorn", "char-2").await.unwrap();
+        assert!(msg.contains("Postmaster"));
+        assert_eq!(inv.calls.lock().unwrap()[0], "postmaster char=char-2");
+    }
 }
