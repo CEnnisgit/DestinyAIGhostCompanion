@@ -100,6 +100,7 @@ async fn voice_ws_handler(
             let profile_saga = state.profile_saga.clone();
             let conversation_saga = state.conversation_saga.clone();
             let bungie_api = state.bungie_api.clone();
+            let manifest_defs = state.manifest_defs.clone();
             ws.on_upgrade(move |socket| {
                 handle_socket(
                     socket,
@@ -109,6 +110,7 @@ async fn voice_ws_handler(
                     lore_saga,
                     profile_saga,
                     bungie_api,
+                    manifest_defs,
                     equip_ctx,
                 )
             })
@@ -139,6 +141,7 @@ async fn handle_socket(
     lore_saga: Option<Arc<LoreSaga>>,
     profile_saga: Arc<GuardianProfileSaga>,
     bungie_api: Arc<crate::bungie_api_client::BungieApiClient>,
+    manifest_defs: Arc<db::ManifestDefinitionResolver>,
     equip_ctx: Option<EquipContext>,
 ) {
     // For a signed-in user, fetch the full dossier (career stats + recent
@@ -164,6 +167,7 @@ async fn handle_socket(
                     &equip_saga,
                     lore_saga.as_deref(),
                     &bungie_api,
+                    &manifest_defs,
                     guardian_context.as_deref(),
                     equip_ctx.as_ref(),
                     &text,
@@ -192,6 +196,7 @@ async fn process_text(
     equip_saga: &EquipItemSaga,
     lore_saga: Option<&LoreSaga>,
     bungie_api: &Arc<crate::bungie_api_client::BungieApiClient>,
+    manifest_defs: &Arc<db::ManifestDefinitionResolver>,
     guardian_context: Option<&str>,
     equip_ctx: Option<&EquipContext>,
     raw: &str,
@@ -232,7 +237,8 @@ async fn process_text(
                 let executor = crate::bungie_api_client::BungieToolExecutor::new(
                     bungie_api.clone(),
                     equip_ctx.map(|c| c.membership_id.clone()),
-                );
+                )
+                .with_definitions(manifest_defs.clone());
                 match chat
                     .converse_with_tools(&inbound.text, guardian_context, Some(&executor))
                     .await

@@ -239,8 +239,35 @@ impl ManifestSync {
             activities += 1;
         }
 
+        // Record definitions (Triumphs) — so record hashes resolve to names.
+        let record_rows = sqlx::query("SELECT id, json FROM DestinyRecordDefinition")
+            .fetch_all(&sqlite)
+            .await
+            .context("reading DestinyRecordDefinition")?;
+        let mut records = 0u64;
+        for row in &record_rows {
+            let Some((hash, def)) = decode_def(row) else { continue };
+            let name = string_at(&def, &["displayProperties", "name"]);
+            if name.is_empty() {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO destiny_records (hash, name, description)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (hash) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description",
+            )
+            .bind(hash)
+            .bind(&name)
+            .bind(opt_string_at(&def, &["displayProperties", "description"]))
+            .execute(&self.pg)
+            .await?;
+            records += 1;
+        }
+
         sqlite.close().await;
-        tracing::info!(items, lore, activities, "loaded manifest definitions");
+        tracing::info!(items, lore, activities, records, "loaded manifest definitions");
         Ok(())
     }
 
