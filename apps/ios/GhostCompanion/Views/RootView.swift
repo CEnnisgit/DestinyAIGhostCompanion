@@ -19,6 +19,7 @@ struct RootView: View {
         }
         .preferredColorScheme(.dark)
         .task(id: auth.membershipID) { session.setSyncOwner(auth.membershipID) }
+        .task(id: auth.selectedCharacterID) { session.setActiveCharacter(auth.selectedCharacterID) }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showConversations) { ConversationsView() }
         .sheet(isPresented: $showCodex) { LoreCodexView() }

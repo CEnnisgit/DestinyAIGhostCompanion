@@ -31,6 +31,9 @@ final class GhostSession: ObservableObject {
     /// server-side and follow the user across devices; when nil they're local.
     @Published private(set) var syncOwner: String?
 
+    /// The active character the Ghost targets for quick gear changes from chat.
+    @Published private(set) var activeCharacterID: String?
+
     private static let urlKey = "ghost.backend.url"
     private var socket: URLSessionWebSocketTask?
 
@@ -69,6 +72,11 @@ final class GhostSession: ObservableObject {
             conversations = loaded
             selectedID = loaded[0].id
         }
+    }
+
+    /// Sets the character the Ghost targets for chat-driven gear changes.
+    func setActiveCharacter(_ id: String?) {
+        activeCharacterID = id
     }
 
     private func loadServerThreads(owner: String) async {
@@ -224,7 +232,7 @@ final class GhostSession: ObservableObject {
                 defer { isAwaiting = false }
                 guard let backend else { return }
                 do {
-                    let reply = try await backend.chat(message: trimmed, membershipID: owner, conversationID: threadID)
+                    let reply = try await backend.chat(message: trimmed, membershipID: owner, conversationID: threadID, characterID: activeCharacterID)
                     updateSelected { $0.messages.append(ChatMessage(role: .ghost, text: reply, intent: "conversation")) }
                 } catch {
                     updateSelected { $0.messages.append(ChatMessage(role: .ghost, text: "The Ghost is unreachable right now.", intent: "error")) }

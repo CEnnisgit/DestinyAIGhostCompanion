@@ -117,12 +117,14 @@ struct GhostBackend {
     }
 
     /// `POST /chat` → a grounded reply. When `conversationID` is given the server
-    /// persists the turn so it syncs across the user's devices.
-    func chat(message: String, membershipID: String?, conversationID: String?) async throws -> String {
+    /// persists the turn so it syncs across the user's devices. When `characterID`
+    /// is given, the Ghost can do quick gear swaps on that character.
+    func chat(message: String, membershipID: String?, conversationID: String?, characterID: String? = nil) async throws -> String {
         struct Wrap: Decodable { let reply: String }
         var body: [String: Any] = ["message": message]
         if let membershipID { body["membership_id"] = membershipID }
         if let conversationID { body["conversation_id"] = conversationID }
+        if let characterID { body["character_id"] = characterID }
         return try await sendJSON(Wrap.self, method: "POST", path: "chat", body: body).reply
     }
 

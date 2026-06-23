@@ -20,6 +20,7 @@ use serde_json::Value;
 use db::ManifestDefinitionResolver;
 use domain::auth::membership::BungieMembershipId;
 use domain::auth::ports::TokenStoragePort;
+use domain::inventory::saga::EquipItemSaga;
 use domain::voice_ai::tools::{ToolCall, ToolExecutor, ToolSpec};
 
 /// Cap tool-result size so a big Bungie payload can't blow the model's context.
@@ -99,6 +100,11 @@ pub struct BungieToolExecutor {
     membership_id: Option<BungieMembershipId>,
     /// Local manifest mirror for naming definition hashes offline (optional).
     definitions: Option<Arc<ManifestDefinitionResolver>>,
+    /// Inventory write engine + the active character writes target. Present only
+    /// when the Guardian is signed in with a selected character, so write tools
+    /// (equip/transfer/postmaster) are advertised only when they can actually run.
+    equip_saga: Option<Arc<EquipItemSaga>>,
+    character_id: Option<String>,
 }
 
 impl BungieToolExecutor {
@@ -107,6 +113,8 @@ impl BungieToolExecutor {
             client,
             membership_id,
             definitions: None,
+            equip_saga: None,
+            character_id: None,
         }
     }
 
@@ -115,6 +123,23 @@ impl BungieToolExecutor {
     pub fn with_definitions(mut self, definitions: Arc<ManifestDefinitionResolver>) -> Self {
         self.definitions = Some(definitions);
         self
+    }
+
+    /// Enables inventory write tools (equip/transfer/pull_postmaster) targeting
+    /// `character_id`. No-op unless both are provided alongside a membership.
+    pub fn with_writes(
+        mut self,
+        equip_saga: Arc<EquipItemSaga>,
+        character_id: Option<String>,
+    ) -> Self {
+        self.equip_saga = Some(equip_saga);
+        self.character_id = character_id;
+        self
+    }
+
+    /// True when write tools can actually run (signed in + a target character).
+    fn writes_enabled(&self) -> bool {
+        self.equip_saga.is_some() && self.membership_id.is_some() && self.character_id.is_some()
     }
 }
 
@@ -161,6 +186,51 @@ impl ToolExecutor for BungieToolExecutor {
                 }),
             });
         }
+
+        // Write actions — advertised only when the Guardian is signed in with a
+        // selected character, so the Ghost can do quick swaps directly.
+        if self.writes_enabled() {
+            specs.push(ToolSpec {
+                name: "equip_item".to_string(),
+                description: "Equip a named weapon or armor piece on the Guardian's active \
+                    character. Handles pulling it from the vault, postmaster, or another \
+                    character automatically. Use when the Guardian asks to equip/use/put on an item."
+                    .to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "item_name": { "type": "string", "description": "The item to equip, e.g. \"Gjallarhorn\"." }
+                    },
+                    "required": ["item_name"]
+                }),
+            });
+            specs.push(ToolSpec {
+                name: "transfer_item".to_string(),
+                description: "Move a named item to the vault, or pull it from the vault onto the \
+                    active character. Set to_vault=true to store it, false to retrieve it."
+                    .to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "item_name": { "type": "string" },
+                        "to_vault": { "type": "boolean", "description": "true = send to vault, false = pull from vault." }
+                    },
+                    "required": ["item_name", "to_vault"]
+                }),
+            });
+            specs.push(ToolSpec {
+                name: "pull_postmaster".to_string(),
+                description: "Pull a named item out of the Postmaster onto the active character."
+                    .to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "item_name": { "type": "string" }
+                    },
+                    "required": ["item_name"]
+                }),
+            });
+        }
         specs
     }
 
@@ -201,8 +271,38 @@ impl ToolExecutor for BungieToolExecutor {
                     None => Ok(format!("No {kind} definition found for hash {hash} (the manifest may not be ingested).")),
                 }
             }
+            "equip_item" | "transfer_item" | "pull_postmaster" => self.run_write(&call.name, &args).await,
             other => Err(anyhow!("unknown tool: {other}")),
         }
+    }
+}
+
+impl BungieToolExecutor {
+    /// Executes an inventory write tool against the active character. Returns the
+    /// saga's conversational result (success or graceful error) as the tool
+    /// output, so the Ghost can relay it naturally.
+    async fn run_write(&self, tool: &str, args: &Value) -> Result<String, anyhow::Error> {
+        let (Some(saga), Some(membership), Some(character_id)) =
+            (&self.equip_saga, &self.membership_id, &self.character_id)
+        else {
+            return Ok("I can't change your gear right now — sign in and pick a character first.".to_string());
+        };
+        let item_name = args
+            .get("item_name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("{tool} requires an 'item_name'"))?;
+
+        let outcome = match tool {
+            "equip_item" => saga.process_equip(membership, item_name, character_id).await,
+            "transfer_item" => {
+                let to_vault = args.get("to_vault").and_then(Value::as_bool).unwrap_or(true);
+                saga.process_transfer(membership, item_name, to_vault, character_id).await
+            }
+            "pull_postmaster" => saga.process_pull_postmaster(membership, item_name, character_id).await,
+            _ => unreachable!("run_write only handles write tools"),
+        };
+        // Both arms are user-facing prose; hand either back to the model.
+        Ok(outcome.unwrap_or_else(|graceful| graceful))
     }
 }
 
