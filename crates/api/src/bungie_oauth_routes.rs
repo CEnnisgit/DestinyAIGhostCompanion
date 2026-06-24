@@ -25,8 +25,9 @@ use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::session::Session;
 use domain::auth::token::BungieOAuthToken;
 use domain::career::saga::GuardianProfileSaga;
-use domain::chats::model::NewMessage;
+use domain::chats::model::{NewMessage, StoredMessage};
 use domain::chats::saga::ChatSyncSaga;
+use domain::voice_ai::tools::ConversationItem;
 use domain::inventory::saga::EquipItemSaga;
 use domain::lore::saga::LoreSaga;
 use domain::voice_ai::conversation::ConversationSaga;
@@ -478,8 +479,19 @@ async fn chat(
         executor = executor.with_writes(state.equip_saga.clone(), req.character_id.clone());
     }
 
+    // Short-term memory: replay the synced thread's recent turns so the Ghost can
+    // follow up ("tell me more about the second one"). The current message isn't
+    // persisted yet, so it isn't double-counted.
+    let history: Vec<ConversationItem> = match (&membership, req.conversation_id.as_deref()) {
+        (Some(owner), Some(thread_id)) => match state.chat_saga.get(&owner.0, thread_id).await {
+            Ok(Some(thread)) => history_from_messages(&thread.messages),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+
     let reply = match conversation
-        .converse_with_tools(&req.message, context.as_deref(), Some(&executor))
+        .converse_with_tools(&req.message, context.as_deref(), &history, Some(&executor))
         .await
     {
         Ok(reply) => reply,
@@ -503,6 +515,28 @@ async fn chat(
     }
 
     Ok(Json(json!({ "reply": reply })))
+}
+
+/// How many recent thread messages to replay as conversational memory.
+const HISTORY_LIMIT: usize = 16;
+
+/// Converts stored thread messages into model conversation items, keeping only
+/// the most recent `HISTORY_LIMIT` (oldest-first).
+fn history_from_messages(messages: &[StoredMessage]) -> Vec<ConversationItem> {
+    let start = messages.len().saturating_sub(HISTORY_LIMIT);
+    messages[start..]
+        .iter()
+        .map(|m| {
+            if m.role == "guardian" {
+                ConversationItem::User(m.text.clone())
+            } else {
+                ConversationItem::Assistant {
+                    content: Some(m.text.clone()),
+                    tool_calls: vec![],
+                }
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]

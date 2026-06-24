@@ -26,6 +26,22 @@ use domain::lore::saga::LoreSaga;
 use domain::voice_ai::conversation::ConversationSaga;
 use domain::voice_ai::intent::VoiceIntent;
 use domain::voice_ai::saga::VoiceCommandSaga;
+use domain::voice_ai::tools::ConversationItem;
+
+/// Cap on per-socket conversational memory (most-recent items kept).
+const WS_HISTORY_LIMIT: usize = 16;
+
+/// Appends a completed turn to the socket's short-term memory, trimming to cap.
+fn remember(history: &mut Vec<ConversationItem>, user: &str, reply: &str) {
+    history.push(ConversationItem::User(user.to_string()));
+    history.push(ConversationItem::Assistant {
+        content: Some(reply.to_string()),
+        tool_calls: vec![],
+    });
+    if history.len() > WS_HISTORY_LIMIT {
+        history.drain(0..history.len() - WS_HISTORY_LIMIT);
+    }
+}
 
 use crate::bungie_oauth_routes::AppState;
 
@@ -168,6 +184,9 @@ async fn handle_socket(
         None => None,
     };
 
+    // Short-term memory for this socket so voice chat can follow up across turns.
+    let mut history: Vec<ConversationItem> = Vec::new();
+
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             Message::Text(text) => {
@@ -180,6 +199,7 @@ async fn handle_socket(
                     &manifest_defs,
                     guardian_context.as_deref(),
                     equip_ctx.as_ref(),
+                    &mut history,
                     &text,
                 )
                 .await;
@@ -209,6 +229,7 @@ async fn process_text(
     manifest_defs: &Arc<db::ManifestDefinitionResolver>,
     guardian_context: Option<&str>,
     equip_ctx: Option<&EquipContext>,
+    history: &mut Vec<ConversationItem>,
     raw: &str,
 ) -> String {
     let Ok(inbound) = serde_json::from_str::<InboundVoice>(raw) else {
@@ -255,11 +276,12 @@ async fn process_text(
                         .with_writes(equip_saga.clone(), Some(ctx.character_id.clone()));
                 }
                 match chat
-                    .converse_with_tools(&inbound.text, guardian_context, Some(&executor))
+                    .converse_with_tools(&inbound.text, guardian_context, history, Some(&executor))
                     .await
                 {
                     Ok(reply) => {
-                        return json!({ "response": reply, "intent": "conversation" }).to_string()
+                        remember(history, &inbound.text, &reply);
+                        return json!({ "response": reply, "intent": "conversation" }).to_string();
                     }
                     // Fall through to the lore RAG / canned reply on LLM failure.
                     Err(_) => {}
