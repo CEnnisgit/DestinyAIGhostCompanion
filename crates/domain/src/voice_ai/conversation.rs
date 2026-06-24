@@ -50,44 +50,53 @@ impl ConversationSaga {
         message: &str,
         guardian_context: Option<&str>,
     ) -> Result<String, anyhow::Error> {
-        self.converse_with_tools(message, guardian_context, None)
+        self.converse_with_tools(message, guardian_context, &[], None)
             .await
     }
 
-    /// Like [`Self::converse`], but when a [`ToolExecutor`] is supplied the Ghost
-    /// may call tools (e.g. live Bungie reads) mid-answer, so it can fetch
-    /// whatever game data the question needs and ground the reply in it.
+    /// Like [`Self::converse`], but with two extra grounding sources:
+    /// - `history`: prior turns of this conversation (oldest first), so the Ghost
+    ///   has short-term memory and can follow up naturally.
+    /// - `tools`: when supplied, the Ghost may call tools (e.g. live Bungie reads)
+    ///   mid-answer to fetch whatever game data the question needs.
     pub async fn converse_with_tools(
         &self,
         message: &str,
         guardian_context: Option<&str>,
+        history: &[ConversationItem],
         tools: Option<&dyn ToolExecutor>,
     ) -> Result<String, anyhow::Error> {
         let system_prompt = self.build_system_prompt(message, guardian_context).await;
-        match tools {
-            Some(executor) => self.run_tool_loop(&system_prompt, message, executor).await,
-            None => self.ai.converse(&system_prompt, message).await,
+        // The single-shot path is only valid with no history and no tools; any
+        // multi-turn or tool conversation must go through the chat_turn loop.
+        if history.is_empty() && tools.is_none() {
+            return self.ai.converse(&system_prompt, message).await;
         }
+        self.run_tool_loop(&system_prompt, history, message, tools).await
     }
 
     /// Drives the model ↔ tool loop until it produces a final reply (or the round
-    /// budget is exhausted, after which we force a tool-free answer).
+    /// budget is exhausted, after which we force a tool-free answer). `history`
+    /// (prior turns) is replayed before the current message; `tools` is optional.
     async fn run_tool_loop(
         &self,
         system_prompt: &str,
+        history: &[ConversationItem],
         message: &str,
-        executor: &dyn ToolExecutor,
+        tools: Option<&dyn ToolExecutor>,
     ) -> Result<String, anyhow::Error> {
-        let specs = executor.specs();
-        let mut items = vec![
-            ConversationItem::System(system_prompt.to_string()),
-            ConversationItem::User(message.to_string()),
-        ];
+        let specs = tools.map(|t| t.specs()).unwrap_or_default();
+
+        let mut items = Vec::with_capacity(history.len() + 2);
+        items.push(ConversationItem::System(system_prompt.to_string()));
+        items.extend(history.iter().cloned());
+        items.push(ConversationItem::User(message.to_string()));
 
         for _ in 0..MAX_TOOL_ROUNDS {
             match self.ai.chat_turn(&items, &specs).await? {
                 AiTurn::Reply(text) => return Ok(text),
-                AiTurn::ToolCalls(calls) if !calls.is_empty() => {
+                AiTurn::ToolCalls(calls) if !calls.is_empty() && tools.is_some() => {
+                    let executor = tools.expect("guarded by tools.is_some()");
                     items.push(ConversationItem::Assistant {
                         content: None,
                         tool_calls: calls.clone(),
@@ -104,7 +113,7 @@ impl ConversationSaga {
                         });
                     }
                 }
-                // Empty tool-call batch: treat as "no answer", break to the final ask.
+                // No tools to run (or an empty batch): break to the final ask.
                 AiTurn::ToolCalls(_) => break,
             }
         }
@@ -268,11 +277,56 @@ mod tests {
         let exec = SpyExecutor { ran: std::sync::Mutex::new(0) };
 
         let reply = saga
-            .converse_with_tools("when did I last clear a raid?", None, Some(&exec))
+            .converse_with_tools("when did I last clear a raid?", None, &[], Some(&exec))
             .await
             .unwrap();
 
         assert!(reply.contains("King's Fall"));
         assert_eq!(*exec.ran.lock().unwrap(), 1, "the tool was executed once");
+    }
+
+    /// Replays prior turns and echoes back the items it received, so we can
+    /// assert history reaches the model.
+    struct HistorySpyAi {
+        seen_history: std::sync::Mutex<bool>,
+    }
+    #[async_trait]
+    impl GenerativeAiPort for HistorySpyAi {
+        async fn interpret_command(&self, _: &str, _: &str) -> Result<VoiceIntent, anyhow::Error> {
+            unreachable!()
+        }
+        async fn chat_turn(
+            &self,
+            items: &[ConversationItem],
+            _tools: &[ToolSpec],
+        ) -> Result<AiTurn, anyhow::Error> {
+            // The prior user turn ("the Witness") must be present before the new one.
+            let mentions_prior = items.iter().any(|i| {
+                matches!(i, ConversationItem::User(t) if t.contains("the Witness"))
+            });
+            *self.seen_history.lock().unwrap() = mentions_prior;
+            Ok(AiTurn::Reply("It is the antagonist of the Light and Dark saga.".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn history_is_replayed_to_the_model() {
+        let ai = Arc::new(HistorySpyAi { seen_history: std::sync::Mutex::new(false) });
+        let saga = ConversationSaga::new(ai.clone(), None, GhostPersonality::Warlock);
+        let history = vec![
+            ConversationItem::User("who is the Witness?".into()),
+            ConversationItem::Assistant {
+                content: Some("The Witness is a paracausal entity.".into()),
+                tool_calls: vec![],
+            },
+        ];
+
+        let reply = saga
+            .converse_with_tools("tell me more", None, &history, None)
+            .await
+            .unwrap();
+
+        assert!(!reply.is_empty());
+        assert!(*ai.seen_history.lock().unwrap(), "prior turns reached the model");
     }
 }
