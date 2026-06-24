@@ -136,31 +136,48 @@ impl AppState {
         headers: &HeaderMap,
         claimed: Option<&str>,
     ) -> Result<BungieMembershipId, AppError> {
-        if let Some(token) = bearer_token(headers) {
-            let session = self
-                .session
-                .verify(&token)
-                .map_err(|_| AppError::unauthorized("invalid or expired session"))?;
-            // Honor revocation: a session issued before the user's cutoff (set on
-            // sign-out) is no longer valid even though its signature/expiry pass.
-            let cutoff = self
-                .revocations
-                .revoked_before(&session.membership_id)
-                .await
-                .unwrap_or(None);
-            if session.is_revoked(cutoff) {
-                return Err(AppError::unauthorized("session has been revoked"));
-            }
-            return Ok(session.membership_id);
-        }
-        if !self.require_auth {
-            if let Some(id) = claimed.map(str::trim).filter(|s| !s.is_empty()) {
-                return BungieMembershipId::new(id.to_string())
-                    .map_err(AppError::unauthorized);
-            }
-        }
-        Err(AppError::unauthorized("authentication required"))
+        authenticate(
+            &*self.session,
+            &*self.revocations,
+            self.require_auth,
+            headers,
+            claimed,
+        )
+        .await
     }
+}
+
+/// The core authentication decision, factored out of `AppState` so it can be
+/// unit-tested without constructing the whole app: a valid, non-revoked bearer
+/// session names the owner; the `membership_id` claim is honored only in dev.
+async fn authenticate(
+    session: &dyn SessionAuthority,
+    revocations: &dyn SessionRevocationPort,
+    require_auth: bool,
+    headers: &HeaderMap,
+    claimed: Option<&str>,
+) -> Result<BungieMembershipId, AppError> {
+    if let Some(token) = bearer_token(headers) {
+        let verified = session
+            .verify(&token)
+            .map_err(|_| AppError::unauthorized("invalid or expired session"))?;
+        // Honor revocation: a session issued before the user's cutoff (set on
+        // sign-out) is no longer valid even though its signature/expiry pass.
+        let cutoff = revocations
+            .revoked_before(&verified.membership_id)
+            .await
+            .unwrap_or(None);
+        if verified.is_revoked(cutoff) {
+            return Err(AppError::unauthorized("session has been revoked"));
+        }
+        return Ok(verified.membership_id);
+    }
+    if !require_auth {
+        if let Some(id) = claimed.map(str::trim).filter(|s| !s.is_empty()) {
+            return BungieMembershipId::new(id.to_string()).map_err(AppError::unauthorized);
+        }
+    }
+    Err(AppError::unauthorized("authentication required"))
 }
 
 /// Extracts a bearer token from the `Authorization` header, if present.
@@ -703,6 +720,7 @@ async fn exchange_code_for_token(
 /// A route error carrying the client-facing status + message. Internal errors
 /// are logged but never leaked (they surface as a generic 500); explicit cases
 /// like 401 carry a safe public message.
+#[derive(Debug)]
 pub struct AppError {
     status: StatusCode,
     message: String,
@@ -740,5 +758,131 @@ impl IntoResponse for AppError {
             tracing::error!(error = %source, "route failed");
         }
         (self.status, self.message).into_response()
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    use crate::session_auth::HmacSessionAuthority;
+    use async_trait::async_trait;
+    use chrono::DateTime;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// In-memory `SessionRevocationPort` so the auth decision can be tested with
+    /// no database.
+    #[derive(Default)]
+    struct InMemoryRevocations {
+        cutoffs: Mutex<HashMap<String, DateTime<Utc>>>,
+    }
+
+    #[async_trait]
+    impl SessionRevocationPort for InMemoryRevocations {
+        async fn revoked_before(
+            &self,
+            membership_id: &BungieMembershipId,
+        ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
+            Ok(self.cutoffs.lock().unwrap().get(&membership_id.0).copied())
+        }
+        async fn revoke_before(
+            &self,
+            membership_id: &BungieMembershipId,
+            cutoff: DateTime<Utc>,
+        ) -> Result<(), anyhow::Error> {
+            self.cutoffs
+                .lock()
+                .unwrap()
+                .insert(membership_id.0.clone(), cutoff);
+            Ok(())
+        }
+    }
+
+    fn member() -> BungieMembershipId {
+        BungieMembershipId::new("alice").unwrap()
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        headers
+    }
+
+    fn mint(authority: &HmacSessionAuthority, issued_at: DateTime<Utc>) -> String {
+        authority
+            .mint(&Session::new(member(), issued_at, issued_at + Duration::days(30)))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn valid_bearer_names_the_owner() {
+        let auth = HmacSessionAuthority::new(b"k".to_vec());
+        let rev = InMemoryRevocations::default();
+        let token = mint(&auth, Utc::now());
+        let owner = authenticate(&auth, &rev, true, &bearer(&token), None).await.unwrap();
+        assert_eq!(owner, member());
+    }
+
+    #[tokio::test]
+    async fn missing_session_is_rejected_when_required() {
+        let auth = HmacSessionAuthority::new(b"k".to_vec());
+        let rev = InMemoryRevocations::default();
+        let err = authenticate(&auth, &rev, true, &HeaderMap::new(), None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn membership_param_cannot_spoof_when_auth_required() {
+        // The original vulnerability: claim any membership_id with no token.
+        // Production (require_auth=true) must reject it.
+        let auth = HmacSessionAuthority::new(b"k".to_vec());
+        let rev = InMemoryRevocations::default();
+        let result = authenticate(&auth, &rev, true, &HeaderMap::new(), Some("victim")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn membership_param_allowed_in_dev() {
+        let auth = HmacSessionAuthority::new(b"k".to_vec());
+        let rev = InMemoryRevocations::default();
+        let owner = authenticate(&auth, &rev, false, &HeaderMap::new(), Some("alice"))
+            .await
+            .unwrap();
+        assert_eq!(owner.0, "alice");
+    }
+
+    #[tokio::test]
+    async fn revoked_session_is_rejected() {
+        let auth = HmacSessionAuthority::new(b"k".to_vec());
+        let rev = InMemoryRevocations::default();
+        let token = mint(&auth, Utc::now() - Duration::seconds(10));
+        rev.revoke_before(&member(), Utc::now()).await.unwrap();
+        let err = authenticate(&auth, &rev, true, &bearer(&token), None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn token_issued_after_revocation_is_accepted() {
+        let auth = HmacSessionAuthority::new(b"k".to_vec());
+        let rev = InMemoryRevocations::default();
+        rev.revoke_before(&member(), Utc::now()).await.unwrap();
+        let token = mint(&auth, Utc::now() + Duration::seconds(5));
+        let owner = authenticate(&auth, &rev, true, &bearer(&token), None).await.unwrap();
+        assert_eq!(owner, member());
+    }
+
+    #[tokio::test]
+    async fn tampered_token_is_rejected() {
+        let auth = HmacSessionAuthority::new(b"k".to_vec());
+        let rev = InMemoryRevocations::default();
+        let result = authenticate(&auth, &rev, true, &bearer("not.atoken"), None).await;
+        assert!(result.is_err());
     }
 }
