@@ -24,6 +24,26 @@ struct RootView: View {
         .sheet(isPresented: $showConversations) { ConversationsView() }
         .sheet(isPresented: $showCodex) { LoreCodexView() }
         .sheet(isPresented: $showActivity) { ActivityLogView() }
+        .onAppear(perform: openScreenshotView)
+    }
+
+    /// Screenshot automation hook (DEBUG only, e.g. App Store captures):
+    /// `simctl launch <udid> <bundle> --screenshot-view codex|activity|conversations`
+    /// opens the named sheet on launch. Compiled out of Release entirely.
+    private func openScreenshotView() {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let flag = args.firstIndex(of: "--screenshot-view"), args.indices.contains(flag + 1) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            switch args[flag + 1] {
+            case "codex": showCodex = true
+            case "activity": showActivity = true
+            case "conversations": showConversations = true
+            case "settings": showSettings = true
+            default: break
+            }
+        }
+        #endif
     }
 
     private var header: some View {
