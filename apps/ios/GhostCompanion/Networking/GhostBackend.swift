@@ -153,6 +153,11 @@ struct GhostBackend {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            // Distinguish the rate limit: the server is fine, the caller is just
+            // over budget — the UI must not report the Ghost as unreachable.
+            if let http = response as? HTTPURLResponse, http.statusCode == 429 {
+                throw GhostBackendError.rateLimited
+            }
             throw GhostBackendError.badStatus
         }
         return try JSONDecoder().decode(T.self, from: data)
@@ -198,4 +203,7 @@ struct GhostBackend {
 enum GhostBackendError: Error {
     case badStatus
     case invalidBaseURL
+    /// 429 from the backend: over the per-Guardian chat budget. Transient —
+    /// retry after a few seconds.
+    case rateLimited
 }

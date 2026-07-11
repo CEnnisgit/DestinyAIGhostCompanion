@@ -234,6 +234,9 @@ final class GhostSession: ObservableObject {
                 do {
                     let reply = try await backend.chat(message: trimmed, membershipID: owner, conversationID: threadID, characterID: activeCharacterID)
                     updateSelected { $0.messages.append(ChatMessage(role: .ghost, text: reply, intent: "conversation")) }
+                } catch GhostBackendError.rateLimited {
+                    // Not an outage — the Guardian is just over the chat budget.
+                    updateSelected { $0.messages.append(ChatMessage(role: .ghost, text: "Easy, Guardian — even a Ghost needs a moment to recharge. Try again in a few seconds.", intent: "throttled")) }
                 } catch {
                     updateSelected { $0.messages.append(ChatMessage(role: .ghost, text: "The Ghost is unreachable right now.", intent: "error")) }
                 }
@@ -270,8 +273,25 @@ final class GhostSession: ObservableObject {
                 case .failure(let error):
                     self.isAwaiting = false
                     self.connection = .failed(error.localizedDescription)
+                    self.explainSocketFailure()
                 }
             }
+        }
+    }
+
+    /// The production backend requires a signed session on `/ws/voice`, so a
+    /// signed-out chat's socket is refused — previously the Guardian's message
+    /// just hung with no reply. Answer the dead air with guidance instead, once
+    /// per attempt (only when their message is still awaiting a reply).
+    private func explainSocketFailure() {
+        guard syncOwner == nil else { return }
+        guard messages.last?.role == .guardian else { return }
+        updateSelected {
+            $0.messages.append(ChatMessage(
+                role: .ghost,
+                text: "I can't speak with you yet, Guardian. Sign in with Bungie in Settings and I'll know your name — or browse the Lore Codex, which is open to everyone.",
+                intent: "error"
+            ))
         }
     }
 
