@@ -476,20 +476,21 @@ async fn chat(
     headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let Some(conversation) = &state.conversation_saga else {
-        return Ok(Json(json!({
-            "reply": "The Ghost's voice is offline — no language model is configured.",
-        })));
-    };
-
     // Resolve the Guardian (when authenticated): used for the dossier context and
     // to bind the live-data tool. In production an anonymous caller is refused —
     // this handler spends inference money, so it must never be open to the world.
     // In dev, anonymous chat is still allowed; it just isn't personalized or persisted.
+    // Auth runs FIRST: it must not be skippable via the no-LLM early return below.
     let membership = match state.resolve_owner(&headers, req.membership_id.as_deref()).await {
         Ok(owner) => Some(owner),
         Err(err) if state.require_auth => return Err(err),
         Err(_) => None,
+    };
+
+    let Some(conversation) = &state.conversation_saga else {
+        return Ok(Json(json!({
+            "reply": "The Ghost's voice is offline — no language model is configured.",
+        })));
     };
 
     // Meter the expensive path. Authenticated Guardians get their own bucket;
