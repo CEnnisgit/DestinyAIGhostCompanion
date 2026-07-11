@@ -177,6 +177,9 @@ async fn main() -> anyhow::Result<()> {
     };
     let revocations: Arc<dyn domain::auth::ports::SessionRevocationPort> =
         Arc::new(PostgresSessionRevocationStore::new(pool.clone()));
+    // In-app account deletion (App Store guideline 5.1.1(v)).
+    let account_eraser: Arc<dyn domain::auth::ports::AccountErasurePort> =
+        Arc::new(db::PostgresAccountEraser::new(pool.clone()));
 
     let grimoire = Arc::new(GrimoireSearch::new(pool.clone(), embeddings));
     // Shared as a lore-grounding source for the conversational Ghost too.
@@ -235,6 +238,12 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // --- Cost control ---
+    // `/chat` and `/ws/voice` each spend paid inference per turn. Cap them per
+    // Guardian so a runaway client — or a stranger who found the public URL —
+    // can't drain the operator's budget. Tunable via GHOST_CHAT_RATE_*.
+    let chat_limiter = Arc::new(api::RateLimiter::from_env("GHOST_CHAT_RATE"));
+
     let state = AppState {
         auth_saga,
         oauth,
@@ -250,7 +259,9 @@ async fn main() -> anyhow::Result<()> {
         chat_saga,
         session,
         revocations,
+        account_eraser,
         require_auth,
+        chat_limiter,
         lore_library,
         ws_dev_token,
     };

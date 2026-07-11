@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use domain::auth::membership::BungieMembershipId;
-use domain::auth::ports::{SessionAuthority, SessionRevocationPort};
+use domain::auth::ports::{AccountErasurePort, SessionAuthority, SessionRevocationPort};
 use domain::auth::saga::OAuthSessionSaga;
 use domain::auth::session::Session;
 use domain::auth::token::BungieOAuthToken;
@@ -112,9 +112,14 @@ pub struct AppState {
     pub session: Arc<dyn SessionAuthority>,
     /// Per-user revocation cutoffs, so sign-out invalidates live tokens.
     pub revocations: Arc<dyn SessionRevocationPort>,
+    /// Erases all of a Guardian's stored data on request (App Store 5.1.1(v)).
+    pub account_eraser: Arc<dyn AccountErasurePort>,
     /// When true, requests MUST carry a valid session — the `membership_id`
     /// parameter dev fallback is disabled. Set in production.
     pub require_auth: bool,
+    /// Caps LLM turns per Guardian on `/chat` and `/ws/voice`; those endpoints
+    /// spend real inference money on every call.
+    pub chat_limiter: Arc<crate::rate_limit::RateLimiter>,
     /// Read access to the lore corpus for the browsable Codex.
     pub lore_library: Arc<db::LoreLibrary>,
     /// Optional shared dev token gating `/ws/voice`. When `None`, the socket is
@@ -195,6 +200,7 @@ pub fn auth_router(state: AppState) -> Router {
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/auth/logout", axum::routing::post(logout))
+        .route("/account", axum::routing::delete(delete_account))
         .route("/characters", get(characters))
         .route("/profile/summary", get(profile_summary))
         .route("/activity/summary", get(activity_summary))
@@ -477,9 +483,22 @@ async fn chat(
     };
 
     // Resolve the Guardian (when authenticated): used for the dossier context and
-    // to bind the live-data tool. Anonymous chat (no auth, dev) is still allowed —
-    // it just isn't personalized or persisted.
-    let membership = state.resolve_owner(&headers, req.membership_id.as_deref()).await.ok();
+    // to bind the live-data tool. In production an anonymous caller is refused —
+    // this handler spends inference money, so it must never be open to the world.
+    // In dev, anonymous chat is still allowed; it just isn't personalized or persisted.
+    let membership = match state.resolve_owner(&headers, req.membership_id.as_deref()).await {
+        Ok(owner) => Some(owner),
+        Err(err) if state.require_auth => return Err(err),
+        Err(_) => None,
+    };
+
+    // Meter the expensive path. Authenticated Guardians get their own bucket;
+    // dev-mode anonymous callers share one, which is the point — an unidentified
+    // caller should not get a fresh allowance just by staying unidentified.
+    let limiter_key = membership.as_ref().map_or("anonymous", |m| m.0.as_str());
+    if let Err(retry_after) = state.chat_limiter.check(limiter_key) {
+        return Err(AppError::too_many_requests(retry_after));
+    }
 
     let context: Option<String> = match &membership {
         Some(m) => state.profile_saga.full_context(m).await,
@@ -673,6 +692,28 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Json<serde
     Json(json!({ "ok": true }))
 }
 
+/// `DELETE /account` — permanently erases the signed-in Guardian's stored data
+/// (Bungie tokens + synced conversations) and kills their live sessions.
+///
+/// Required by App Store guideline 5.1.1(v): an account that can be created in
+/// the app must be deletable from the app.
+///
+/// Passing `claimed: None` to `resolve_owner` means the `membership_id` dev
+/// fallback cannot reach this route — an irreversible delete always demands a
+/// real bearer session, even when the server is running in dev mode.
+///
+/// Unlike `logout`, a failure here is surfaced rather than swallowed: a user who
+/// is told their account was deleted must not still have data on the server.
+async fn delete_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let owner = state.resolve_owner(&headers, None).await?;
+    state.account_eraser.erase_account(&owner, Utc::now()).await?;
+    tracing::info!("erased account on user request");
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[derive(Debug, Deserialize)]
 struct TokenExchangeResponse {
     access_token: String,
@@ -726,6 +767,8 @@ pub struct AppError {
     message: String,
     /// Logged server-side only (for 500s); never sent to the client.
     source: Option<anyhow::Error>,
+    /// Seconds to advertise in `Retry-After` (429s only).
+    retry_after_secs: Option<u64>,
 }
 
 impl AppError {
@@ -735,6 +778,18 @@ impl AppError {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
             source: None,
+            retry_after_secs: None,
+        }
+    }
+
+    /// A 429 telling the client how long to wait. Rounds up, and always asks for
+    /// at least a second so a sub-second wait can't become a busy-retry loop.
+    pub fn too_many_requests(retry_after: std::time::Duration) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: "The Ghost needs a moment — too many requests. Try again shortly.".to_string(),
+            source: None,
+            retry_after_secs: Some(retry_after.as_secs_f64().ceil().max(1.0) as u64),
         }
     }
 }
@@ -748,6 +803,7 @@ where
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: "internal error".to_string(),
             source: Some(err.into()),
+            retry_after_secs: None,
         }
     }
 }
@@ -756,6 +812,14 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         if let Some(source) = &self.source {
             tracing::error!(error = %source, "route failed");
+        }
+        if let Some(secs) = self.retry_after_secs {
+            return (
+                self.status,
+                [(axum::http::header::RETRY_AFTER, secs.to_string())],
+                self.message,
+            )
+                .into_response();
         }
         (self.status, self.message).into_response()
     }

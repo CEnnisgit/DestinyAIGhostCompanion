@@ -46,3 +46,21 @@ pub trait SessionRevocationPort: Send + Sync {
         cutoff: DateTime<Utc>,
     ) -> Result<(), anyhow::Error>;
 }
+
+/// Secondary Port (Driven): permanently erases everything the backend stores
+/// about a Guardian — Bungie tokens and synced conversations. Required by App
+/// Store guideline 5.1.1(v): an account created in-app must be deletable in-app.
+///
+/// Erasure must also revoke outstanding sessions. Sessions are stateless signed
+/// tokens, so a user's live 30-day token would otherwise keep working after
+/// deletion and let them recreate the data they just erased.
+#[async_trait]
+pub trait AccountErasurePort: Send + Sync {
+    /// Deletes all stored data for the Guardian and invalidates their sessions
+    /// as of `revoked_at`. Atomic: either everything goes, or nothing does.
+    async fn erase_account(
+        &self,
+        membership_id: &BungieMembershipId,
+        revoked_at: DateTime<Utc>,
+    ) -> Result<(), anyhow::Error>;
+}
