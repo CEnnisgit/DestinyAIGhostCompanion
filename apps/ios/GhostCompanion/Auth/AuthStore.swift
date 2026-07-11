@@ -108,6 +108,25 @@ final class AuthStore: NSObject, ObservableObject, ASWebAuthenticationPresentati
         if let backend = GhostBackend(baseURLString: backendURLString) {
             Task { await backend.logout() }
         }
+        clearLocalCredentials()
+    }
+
+    /// Permanently deletes the Guardian's server-side account, then signs out.
+    ///
+    /// Required by App Store guideline 5.1.1(v). Throws when the server refuses,
+    /// and deliberately leaves local credentials intact in that case — the user
+    /// stays signed in and can retry, rather than being locked out of an account
+    /// that still exists. Local state is discarded only once the server confirms.
+    func deleteAccount(backendURLString: String) async throws {
+        guard let backend = GhostBackend(baseURLString: backendURLString) else {
+            throw GhostBackendError.invalidBaseURL
+        }
+        try await backend.deleteAccount()
+        clearLocalCredentials()
+    }
+
+    /// Drops every trace of the signed-in Guardian from this device.
+    private func clearLocalCredentials() {
         KeychainStore.delete(service: service, account: account)
         KeychainStore.delete(service: service, account: sessionAccount)
         membershipID = nil
