@@ -2,8 +2,9 @@ import AVFoundation
 import Foundation
 import Speech
 
-/// On-device speech capture. Streams microphone audio into `SFSpeechRecognizer`
-/// and publishes a live transcript the chat view can send to the Ghost.
+/// Speech capture. Streams microphone audio into `SFSpeechRecognizer` and
+/// publishes a live transcript the chat view can send to the Ghost. Prefers
+/// on-device recognition so audio never leaves the phone; see `start()`.
 @MainActor
 final class VoiceRecognizer: ObservableObject {
     @Published private(set) var isRecording = false
@@ -53,6 +54,13 @@ final class VoiceRecognizer: ObservableObject {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        // Keep the Guardian's audio on the device whenever the recognizer can do
+        // it. `requiresOnDeviceRecognition` defaults to `false`, which streams
+        // microphone audio to Apple's servers — contradicting what the app tells
+        // the user in Info.plist and PRIVACY.md. On-device support depends on the
+        // locale; where it's missing we fall back to server recognition, which is
+        // exactly the "where available" carve-out the privacy policy describes.
+        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         self.request = request
 
         let input = audioEngine.inputNode

@@ -5,6 +5,9 @@ struct SettingsView: View {
     @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
     @State private var urlDraft: String = ""
+    @State private var showDeleteConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var deleteErrorMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -75,6 +78,31 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                // App Store guideline 5.1.1(v): an account created in the app must
+                // be deletable from the app, not only by emailing support.
+                if auth.isSignedIn {
+                    Section {
+                        Button(role: .destructive) {
+                            showDeleteConfirmation = true
+                        } label: {
+                            if isDeletingAccount {
+                                HStack { ProgressView(); Text("Deleting…") }
+                            } else {
+                                Text("Delete Account")
+                            }
+                        }
+                        .disabled(isDeletingAccount)
+
+                        if let deleteErrorMessage {
+                            Text(deleteErrorMessage).font(.footnote).foregroundStyle(.red)
+                        }
+                    } header: {
+                        Text("Delete Account")
+                    } footer: {
+                        Text("Permanently erases your saved conversations and your Bungie sign-in from our server, and signs you out everywhere. Your Destiny account and game data are untouched. This cannot be undone.")
+                    }
+                }
+
                 Section {
                     LabeledContent("Version", value: "1.0")
                     Link("Privacy Policy", destination: URL(string: "https://ghostcompanion.app/privacy")!)
@@ -83,6 +111,12 @@ struct SettingsView: View {
                 } footer: {
                     Text("Ghost Companion is an unofficial, fan-made app. It is not affiliated with, endorsed by, or sponsored by Bungie, Inc. Destiny is a trademark of Bungie, Inc.")
                 }
+            }
+            .alert("Delete your account?", isPresented: $showDeleteConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) { deleteAccount() }
+            } message: {
+                Text("This permanently deletes your saved conversations and revokes the app's access to your Bungie account. It cannot be undone.")
             }
             .scrollContentBackground(.hidden)
             .background(GhostTheme.backgroundGradient.ignoresSafeArea())
@@ -99,6 +133,24 @@ struct SettingsView: View {
                 if auth.isSignedIn && auth.characters.isEmpty {
                     await auth.loadCharacters(backendURLString: session.backendURLString)
                 }
+            }
+        }
+    }
+
+    /// Erases the Guardian's server-side account. Dismisses only once the server
+    /// confirms; on failure the user stays signed in and sees why, rather than
+    /// being told a deletion happened that didn't.
+    private func deleteAccount() {
+        isDeletingAccount = true
+        deleteErrorMessage = nil
+        Task {
+            do {
+                try await auth.deleteAccount(backendURLString: session.backendURLString)
+                isDeletingAccount = false
+                dismiss()
+            } catch {
+                isDeletingAccount = false
+                deleteErrorMessage = "Could not delete your account. Check your connection and try again."
             }
         }
     }

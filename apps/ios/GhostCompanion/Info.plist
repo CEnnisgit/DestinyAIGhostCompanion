@@ -6,11 +6,12 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Ghost Companion</string>
-	<!-- Default backend the app talks to. Set this to your production HTTPS
-	     endpoint before archiving for the App Store (e.g. https://api.example.com).
-	     Leave as localhost for development. Users can override it in Settings. -->
+	<!-- Default backend the app talks to. Substituted at build time from the
+	     GHOST_BACKEND_URL build setting: localhost in Debug, the production
+	     HTTPS endpoint in Release (see apps/ios/project.yml). Users can still
+	     override it in Settings. -->
 	<key>GhostBackendURL</key>
-	<string>http://localhost:8080</string>
+	<string>$(GHOST_BACKEND_URL)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -51,9 +52,12 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ghost Companion uses the microphone so you can speak commands to your Ghost instead of typing.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Ghost Companion transcribes your speech on-device to understand your commands.</string>
-	<!-- ATS: production uses HTTPS. The localhost exception only enables talking to a
-	     locally-run backend during development; remove it for the App Store build. -->
+	<string>Ghost Companion transcribes your speech to understand your commands. Transcription happens on your device whenever your language supports it.</string>
+	<!-- ATS: production is HTTPS. This is the narrowest possible exception — it
+	     permits cleartext to `localhost` only, so it grants nothing on a user's
+	     device, and it lets a TestFlight/Release build be pointed at a local
+	     server for debugging. It is NOT a blanket NSAllowsArbitraryLoads and
+	     needs no App Review justification, so it is safe to ship as-is. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>

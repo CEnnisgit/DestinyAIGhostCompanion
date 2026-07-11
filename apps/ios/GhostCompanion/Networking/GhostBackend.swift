@@ -46,6 +46,19 @@ struct GhostBackend {
         _ = try? await URLSession.shared.data(for: request)
     }
 
+    /// `DELETE /account` — permanently erase the Guardian's server-side data
+    /// (Bungie tokens + synced conversations) and revoke their live sessions.
+    ///
+    /// Unlike `logout`, failure is thrown rather than ignored: the caller must
+    /// not tell the user their account was deleted unless the server said so.
+    func deleteAccount() async throws {
+        let request = authed(baseURL.appendingPathComponent("account"), method: "DELETE")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw GhostBackendError.badStatus
+        }
+    }
+
     /// `GET /characters?membership_id=...` → the signed-in user's characters.
     func characters(membershipID: String) async throws -> [CharacterSummary] {
         var components = URLComponents(url: baseURL.appendingPathComponent("characters"), resolvingAgainstBaseURL: false)!

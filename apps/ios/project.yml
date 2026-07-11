@@ -3,6 +3,9 @@ options:
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
+configs:
+  Debug: debug
+  Release: release
 targets:
   GhostCompanion:
     type: application
@@ -23,5 +26,14 @@ targets:
         # Set your Apple Developer Team ID here before archiving for the App Store.
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
+      configs:
+        # Substituted into Info.plist's `GhostBackendURL`. Debug talks to a local
+        # server; Release ships pointing at production, so an archive can never
+        # accidentally ship a localhost default.
+        Debug:
+          GHOST_BACKEND_URL: http://localhost:8080
+        Release:
+          # TODO(launch): replace with your deployed HTTPS backend before archiving.
+          GHOST_BACKEND_URL: https://ghost-companion-api.onrender.com
     scheme:
       testTargets: []
