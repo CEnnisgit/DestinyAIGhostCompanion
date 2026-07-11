@@ -25,8 +25,12 @@ their API Terms of Use.
 - **Conversations.** Chats you have with the Ghost are stored on our backend,
   associated with your Bungie membership id, so they sync across your devices.
 - **Microphone / speech (optional).** If you use voice input, speech is
-  transcribed to text so the app can understand your command. Transcription uses
-  Apple's on-device speech recognition where available.
+  transcribed to text so the app can understand your command. The app requests
+  Apple's **on-device** speech recognition, so in the supported languages your
+  audio never leaves your phone. Where your language has no on-device model,
+  Apple's speech framework transcribes it on Apple's servers under Apple's
+  privacy policy. We never store or transmit raw audio ourselves — only the
+  resulting text, and only when you send it to the Ghost.
 
 ## What we do NOT do
 
@@ -45,10 +49,19 @@ their API Terms of Use.
 
 ## Data retention & deletion
 
-- Your stored conversations remain until you delete them in the app or request
-  account deletion.
+- Your stored conversations remain until you delete them in the app or delete
+  your account.
 - Signing out removes your session and stored Bungie tokens from the device.
-- To request deletion of server-side data, contact the address below.
+- **Deleting your account.** In the app, open **Settings → Delete Account**. This
+  permanently erases your synced conversations and the Bungie access/refresh
+  tokens we hold, and immediately invalidates every active session on all your
+  devices. It cannot be undone. Your Destiny account and in-game data are not
+  affected — deletion only removes what this app stored.
+- After deletion we retain a single record — your Bungie membership id and the
+  time of deletion — for the sole purpose of keeping already-issued sign-in
+  tokens from being reused. It contains no conversations, no game data, and no
+  credentials.
+- You may also email the address below with any deletion question.
 
 ## Security
 
