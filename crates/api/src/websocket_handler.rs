@@ -111,6 +111,14 @@ async fn voice_ws_handler(
             .filter(|m| !m.is_empty())
             .and_then(|m| BungieMembershipId::new(m).ok())
     });
+
+    // Meter per Guardian, not per socket — otherwise reconnecting would reset the
+    // budget. Derived before `equip_ctx` consumes the membership; a signed-in user
+    // with no character selected still gets their own bucket.
+    let limiter_key = membership
+        .as_ref()
+        .map_or_else(|| "anonymous".to_string(), |m| m.0.clone());
+
     let equip_ctx = match (membership, query.character_id) {
         (Some(membership_id), Some(c)) if !c.is_empty() => Some(EquipContext {
             membership_id,
@@ -127,6 +135,7 @@ async fn voice_ws_handler(
             let conversation_saga = state.conversation_saga.clone();
             let bungie_api = state.bungie_api.clone();
             let manifest_defs = state.manifest_defs.clone();
+            let limiter = state.chat_limiter.clone();
             ws.on_upgrade(move |socket| {
                 handle_socket(
                     socket,
@@ -138,6 +147,8 @@ async fn voice_ws_handler(
                     bungie_api,
                     manifest_defs,
                     equip_ctx,
+                    limiter,
+                    limiter_key,
                 )
             })
         }
@@ -169,6 +180,8 @@ async fn handle_socket(
     bungie_api: Arc<crate::bungie_api_client::BungieApiClient>,
     manifest_defs: Arc<db::ManifestDefinitionResolver>,
     equip_ctx: Option<EquipContext>,
+    limiter: Arc<crate::rate_limit::RateLimiter>,
+    limiter_key: String,
 ) {
     // For a signed-in user, fetch the full dossier (career stats + recent
     // activity): greet them and use it to personalize and ground every reply.
@@ -190,6 +203,23 @@ async fn handle_socket(
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             Message::Text(text) => {
+                // Meter before spending inference. Throttling answers in-band
+                // rather than closing the socket: the client stays connected and
+                // the Guardian sees why the Ghost went quiet.
+                if let Err(retry_after) = limiter.check(&limiter_key) {
+                    let secs = retry_after.as_secs_f64().ceil().max(1.0) as u64;
+                    let throttled = json!({
+                        "response": format!(
+                            "The Ghost needs a moment to recharge. Try again in {secs}s."
+                        ),
+                        "intent": "throttled",
+                        "retry_after_secs": secs,
+                    })
+                    .to_string();
+                    let _ = socket.send(Message::Text(throttled)).await;
+                    continue;
+                }
+
                 let reply = process_text(
                     &saga,
                     conversation_saga.as_deref(),

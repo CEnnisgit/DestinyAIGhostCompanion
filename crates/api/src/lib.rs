@@ -9,6 +9,7 @@ pub mod bungie_identity_client;
 pub mod bungie_inventory_client;
 pub mod bungie_oauth_routes;
 pub mod openai_client;
+pub mod rate_limit;
 pub mod refreshing_token_store;
 pub mod session_auth;
 pub mod websocket_handler;
@@ -21,6 +22,7 @@ pub use bungie_identity_client::BungieIdentityClient;
 pub use bungie_inventory_client::BungieInventoryClient;
 pub use bungie_oauth_routes::{auth_router, AppState, BungieOAuthConfig};
 pub use openai_client::OpenAiClient;
+pub use rate_limit::RateLimiter;
 pub use refreshing_token_store::RefreshingTokenStore;
 pub use session_auth::HmacSessionAuthority;
 
