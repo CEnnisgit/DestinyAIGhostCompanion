@@ -585,6 +585,18 @@ body {
   color: var(--accent);
   border: 1px solid var(--accent-hairline);
 }
+.btn.danger {
+  background: transparent;
+  color: #ff6b6b;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+}
+.btn.danger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.error-text {
+  color: #ff6b6b;
+}
 .muted {
   color: var(--text-2);
   font-size: 13px;

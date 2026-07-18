@@ -82,13 +82,14 @@ matched from combinations of single keywords.)
 
 ## Support URL
 
-`https://github.com/CEnnisgit/DestinyAIGhostCompanion` (or a dedicated page)
+`https://cennisgit.github.io/DestinyAIGhostCompanion/` (landing page with
+support + privacy links; served from the repo's `gh-pages` branch)
 
 ## Privacy Policy URL
 
-Host `PRIVACY.md` publicly first (GitHub Pages works; App Review just needs a
-reachable URL). Placeholder in-app is `https://ghostcompanion.app/privacy` —
-**the Settings link and this field must match wherever it's actually hosted.**
+`https://cennisgit.github.io/DestinyAIGhostCompanion/privacy/` — **live**,
+served from the repo's `gh-pages` branch, and matches the in-app Settings link
+on both iOS and web.
 
 ## Age rating
 
