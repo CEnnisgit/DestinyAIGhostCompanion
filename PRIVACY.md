@@ -3,9 +3,11 @@
 _Last updated: 2026-06-22_
 
 Ghost Companion ("the app") is an unofficial, fan-made companion for Destiny 2.
-This policy explains what data the app handles and why. Host this document at a
-public URL (e.g. `https://ghostcompanion.app/privacy`) and reference that URL in
-App Store Connect and in the app's Settings screen.
+This policy explains what data the app handles and why.
+
+**Hosted at:** <https://cennisgit.github.io/DestinyAIGhostCompanion/privacy/>
+(served from this repo's `gh-pages` branch — keep the two in sync when editing).
+Reference that URL in App Store Connect and in the app's Settings screen.
 
 ## Who we are
 
@@ -75,7 +77,5 @@ The app is not directed at children under 13.
 
 ## Contact
 
-Questions or deletion requests: **support@ghostcompanion.app**
-
-_Replace the contact address and policy URL with your real values before
-submitting to the App Store._
+Questions or deletion requests: open an issue on our
+[GitHub support page](https://github.com/CEnnisgit/DestinyAIGhostCompanion/issues).

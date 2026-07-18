@@ -4,6 +4,26 @@ import { useGhost } from "../store";
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const g = useGhost();
   const [draft, setDraft] = useState(g.backendURL);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Erases the Guardian's server-side account. Closes only once the server
+  // confirms; on failure the user stays signed in and sees why, rather than
+  // being told a deletion happened that didn't.
+  const deleteAccount = async () => {
+    setDeletingAccount(true);
+    setDeleteError(null);
+    try {
+      await g.deleteAccount();
+      onClose();
+    } catch {
+      setDeleteError("Could not delete your account. Check your connection and try again.");
+    } finally {
+      setDeletingAccount(false);
+      setConfirmingDelete(false);
+    }
+  };
 
   return (
     <div className="scrim center" onClick={onClose}>
@@ -31,6 +51,28 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             <button className="btn ghost" onClick={g.signOut}>
               Sign Out
             </button>
+
+            <div className="section-label">Delete Account</div>
+            <p className="muted small">
+              Permanently erases your saved conversations and your Bungie sign-in from our server,
+              and signs you out everywhere. Your Destiny account and game data are untouched. This
+              cannot be undone.
+            </p>
+            {confirmingDelete ? (
+              <>
+                <button className="btn danger" onClick={deleteAccount} disabled={deletingAccount}>
+                  {deletingAccount ? "Deleting…" : "Yes, permanently delete my account"}
+                </button>
+                <button className="btn ghost" onClick={() => setConfirmingDelete(false)} disabled={deletingAccount}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button className="btn danger" onClick={() => setConfirmingDelete(true)}>
+                Delete Account
+              </button>
+            )}
+            {deleteError && <p className="muted small error-text">{deleteError}</p>}
           </>
         ) : (
           <button className="btn" onClick={g.signIn}>
@@ -54,7 +96,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         <p className="muted small">
           Ghost Companion is an unofficial, fan-made app — not affiliated with, endorsed by, or
           sponsored by Bungie, Inc. Destiny is a trademark of Bungie, Inc.{" "}
-          <a href="https://ghostcompanion.app/privacy" target="_blank" rel="noreferrer">
+          <a href="https://cennisgit.github.io/DestinyAIGhostCompanion/privacy/" target="_blank" rel="noreferrer">
             Privacy Policy
           </a>
         </p>

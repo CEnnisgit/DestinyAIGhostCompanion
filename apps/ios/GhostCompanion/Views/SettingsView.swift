@@ -105,7 +105,7 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent("Version", value: "1.0")
-                    Link("Privacy Policy", destination: URL(string: "https://ghostcompanion.app/privacy")!)
+                    Link("Privacy Policy", destination: URL(string: "https://cennisgit.github.io/DestinyAIGhostCompanion/privacy/")!)
                 } header: {
                     Text("About")
                 } footer: {

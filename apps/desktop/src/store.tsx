@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   GhostBackend,
+  RateLimitedError,
   type CharacterSummary,
   type SyncedMessage,
   type SyncedThreadSummary,
@@ -91,6 +92,7 @@ interface GhostState {
   checkHealth: () => void;
   signIn: () => void;
   signOut: () => void;
+  deleteAccount: () => Promise<void>;
   selectCharacter: (id: string) => void;
 }
 
@@ -256,6 +258,23 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     [updateSelected],
   );
 
+  /// The production backend requires a signed session on `/ws/voice`, so a
+  /// signed-out chat's socket is refused — previously the Guardian's message
+  /// just hung with no reply. Answer the dead air with guidance instead, once
+  /// per attempt (only while their message is still the last one shown).
+  const explainSocketFailure = useCallback(() => {
+    if (membershipRef.current) return;
+    updateSelected((c) => {
+      if (c.messages[c.messages.length - 1]?.role !== "guardian") return;
+      c.messages.push({
+        id: uid(),
+        role: "ghost",
+        text: "I can't speak with you yet, Guardian. Sign in with Bungie and I'll know your name — or browse the Lore Codex, which is open to everyone.",
+        intent: "error",
+      });
+    });
+  }, [updateSelected]);
+
   const ensureSocket = useCallback((): WebSocket => {
     const existing = socketRef.current;
     if (existing && existing.readyState <= WebSocket.OPEN) return existing;
@@ -266,13 +285,16 @@ export function GhostProvider({ children }: { children: ReactNode }) {
       }),
     );
     ws.onmessage = (e) => handleInbound(typeof e.data === "string" ? e.data : "");
-    ws.onerror = () => setIsAwaiting(false);
+    ws.onerror = () => {
+      setIsAwaiting(false);
+      explainSocketFailure();
+    };
     ws.onclose = () => {
       if (socketRef.current === ws) socketRef.current = null;
     };
     socketRef.current = ws;
     return ws;
-  }, [backend, handleInbound]);
+  }, [backend, handleInbound, explainSocketFailure]);
 
   const send = useCallback(
     (text: string) => {
@@ -298,9 +320,15 @@ export function GhostProvider({ children }: { children: ReactNode }) {
               c.messages.push({ id: uid(), role: "ghost", text: reply, intent: "conversation" });
             });
           })
-          .catch(() => {
+          .catch((err) => {
+            // A 429 is not an outage — the Guardian is just over the chat budget.
+            const throttled = err instanceof RateLimitedError;
             updateSelected((c) => {
-              c.messages.push({ id: uid(), role: "ghost", text: "The Ghost is unreachable right now.", intent: "error" });
+              c.messages.push(
+                throttled
+                  ? { id: uid(), role: "ghost", text: "Easy, Guardian — even a Ghost needs a moment to recharge. Try again in a few seconds.", intent: "throttled" }
+                  : { id: uid(), role: "ghost", text: "The Ghost is unreachable right now.", intent: "error" },
+              );
             });
           })
           .finally(() => setIsAwaiting(false));
@@ -394,9 +422,8 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     window.location.href = loginUrl.toString();
   }, [backend]);
 
-  const signOut = useCallback(() => {
-    // Revoke the session server-side before discarding the token locally.
-    void backend.logout();
+  /// Drops every trace of the signed-in Guardian from this browser.
+  const clearLocalCredentials = useCallback(() => {
     localStorage.removeItem(MEMBER_KEY);
     localStorage.removeItem(CHAR_KEY);
     localStorage.removeItem(SESSION_KEY);
@@ -409,7 +436,22 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     const local = loadConversations();
     setConversations(local);
     setSelectedId(local[0].id);
-  }, [backend]);
+  }, []);
+
+  const signOut = useCallback(() => {
+    // Revoke the session server-side before discarding the token locally.
+    void backend.logout();
+    clearLocalCredentials();
+  }, [backend, clearLocalCredentials]);
+
+  /// Permanently deletes the Guardian's server-side account, then signs out.
+  /// Throws when the server refuses, and deliberately leaves local credentials
+  /// intact in that case — the user stays signed in and can retry, rather than
+  /// being locked out of an account that still exists.
+  const deleteAccount = useCallback(async () => {
+    await backend.deleteAccount();
+    clearLocalCredentials();
+  }, [backend, clearLocalCredentials]);
 
   const messages = conversations.find((c) => c.id === selectedId)?.messages ?? [];
 
@@ -432,6 +474,7 @@ export function GhostProvider({ children }: { children: ReactNode }) {
     checkHealth,
     signIn,
     signOut,
+    deleteAccount,
     selectCharacter,
   };
 

@@ -1,5 +1,15 @@
 // Client for the Ghost Companion Rust backend (apps/server).
 
+/// 429 from the backend: over the per-Guardian chat budget. Transient — the
+/// server is fine, retry after a few seconds. Kept distinct so the UI doesn't
+/// report a healthy rate limit as an outage.
+export class RateLimitedError extends Error {
+  constructor() {
+    super("rate limited");
+    this.name = "RateLimitedError";
+  }
+}
+
 export interface CharacterSummary {
   characterId: string;
   classType: number;
@@ -79,6 +89,7 @@ export class GhostBackend {
       headers: this.headers({ "content-type": "application/json" }),
       body: JSON.stringify(body),
     });
+    if (res.status === 429) throw new RateLimitedError();
     if (!res.ok) throw new Error(`POST ${path} failed (${res.status})`);
     return res.json();
   }
@@ -151,6 +162,15 @@ export class GhostBackend {
   /// Revoke this session server-side (best-effort) so the token can't be reused.
   async logout(): Promise<void> {
     await fetch(this.url("/auth/logout"), { method: "POST", headers: this.headers() }).catch(() => {});
+  }
+
+  /// `DELETE /account` — permanently erase the Guardian's server-side data
+  /// (Bungie tokens + synced conversations) and revoke their live sessions.
+  /// Unlike `logout`, failure is thrown rather than swallowed: the caller must
+  /// not tell the user their account was deleted unless the server said so.
+  async deleteAccount(): Promise<void> {
+    const res = await fetch(this.url("/account"), { method: "DELETE", headers: this.headers() });
+    if (!res.ok) throw new Error(`account deletion failed (${res.status})`);
   }
 
   voiceSocketURL(opts: { membershipId?: string; characterId?: string } = {}): string {
