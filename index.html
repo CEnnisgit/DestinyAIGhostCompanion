@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghost Companion — an AI Ghost for Destiny</title>
+<meta name="description" content="Ghost Companion is an unofficial, fan-made AI companion app for Destiny: lore answers, your Guardian's record, and voice gear swaps.">
+<style>
+  :root {
+    --bg: #060b14;
+    --bg-2: #0a1220;
+    --accent: #4da6ff;
+    --accent-dim: rgba(77, 166, 255, 0.35);
+    --text: #e8eef7;
+    --text-2: #93a3b8;
+    --hairline: rgba(77, 166, 255, 0.16);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 700px at 50% -10%, #0d1a30 0%, var(--bg) 60%);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px;
+  }
+  main { max-width: 640px; width: 100%; text-align: center; }
+  .mark {
+    width: 84px; height: 84px; margin: 24px auto 28px;
+    border: 3px solid var(--accent); border-radius: 20px;
+    transform: rotate(45deg);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 42px var(--accent-dim), inset 0 0 18px var(--accent-dim);
+  }
+  .mark::after {
+    content: ""; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 14px var(--accent);
+  }
+  h1 { font-size: 34px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .tag { color: var(--text-2); font-size: 17px; margin-bottom: 32px; }
+  .links { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 40px; }
+  .links a {
+    color: var(--accent); text-decoration: none; font-weight: 600;
+    border: 1px solid var(--hairline); border-radius: 999px; padding: 10px 20px;
+    transition: border-color .15s ease;
+  }
+  .links a:hover { border-color: var(--accent); }
+  .card {
+    background: var(--bg-2); border: 1px solid var(--hairline); border-radius: 16px;
+    padding: 20px 24px; text-align: left; color: var(--text-2); font-size: 14px;
+  }
+  footer { margin-top: auto; padding-top: 48px; color: var(--text-2); font-size: 12px; max-width: 640px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark" role="img" aria-label="Ghost Companion mark"></div>
+  <h1>Ghost Companion</h1>
+  <p class="tag">Every Guardian deserves a Ghost. An AI companion for Destiny — lore with receipts, your career at a glance, gear swaps by voice.</p>
+  <nav class="links">
+    <a href="./privacy/">Privacy Policy</a>
+    <a href="https://github.com/CEnnisgit/DestinyAIGhostCompanion">Source on GitHub</a>
+    <a href="https://github.com/CEnnisgit/DestinyAIGhostCompanion/issues">Support</a>
+  </nav>
+  <div class="card">
+    Ghost Companion is an unofficial, fan-made project. It is not affiliated with, endorsed by,
+    or sponsored by Bungie, Inc. Destiny, the Destiny logo, and the Ghost are trademarks of
+    Bungie, Inc. Game data is provided by the official Bungie API.
+  </div>
+</main>
+<footer>© 2026 Ghost Companion · <a href="./privacy/" style="color:inherit">Privacy</a></footer>
+</body>
+</html>

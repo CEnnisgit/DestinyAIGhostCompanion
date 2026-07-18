@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Ghost Companion</title>
+<meta name="description" content="Privacy policy for Ghost Companion, the unofficial AI companion app for Destiny.">
+<style>
+  :root {
+    --bg: #060b14;
+    --bg-2: #0a1220;
+    --accent: #4da6ff;
+    --text: #e8eef7;
+    --text-2: #93a3b8;
+    --hairline: rgba(77, 166, 255, 0.16);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 40px 20px 80px;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  a { color: var(--accent); }
+  h1 { font-size: 30px; margin-bottom: 4px; letter-spacing: -0.02em; }
+  .updated { color: var(--text-2); font-size: 14px; margin-bottom: 28px; }
+  h2 {
+    font-size: 20px; margin: 32px 0 10px; color: var(--accent);
+    border-bottom: 1px solid var(--hairline); padding-bottom: 6px;
+  }
+  p, li { color: var(--text); margin-bottom: 10px; }
+  ul { padding-left: 22px; }
+  strong { color: #fff; }
+  .home { display: inline-block; margin-bottom: 24px; color: var(--accent); text-decoration: none; font-weight: 600; }
+  .note {
+    background: var(--bg-2); border: 1px solid var(--hairline); border-radius: 12px;
+    padding: 14px 18px; color: var(--text-2); font-size: 14px; margin-bottom: 24px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <a class="home" href="../">← Ghost Companion</a>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: 2026-07-18</p>
+
+  <div class="note">
+    Ghost Companion ("the app") is an unofficial, fan-made companion for Destiny 2.
+    This policy explains what data the app handles and why.
+  </div>
+
+  <h2>Who we are</h2>
+  <p>Ghost Companion is an independent project. <strong>It is not affiliated with, endorsed by,
+  or sponsored by Bungie, Inc.</strong> Destiny and the Ghost are trademarks of Bungie, Inc.
+  Game data is accessed through Bungie's official, public API under their API Terms of Use.</p>
+
+  <h2>What data we access</h2>
+  <ul>
+    <li><strong>Bungie account data (via OAuth).</strong> When you sign in with Bungie, we receive
+    an OAuth access/refresh token that lets the app read your Destiny profile on your behalf:
+    your characters, inventory, triumphs/records, and activity history (including activity dates
+    and the other players in your fireteams). The app uses this solely to answer your questions
+    and personalize your Ghost. We never ask for your Bungie password — authentication is handled
+    entirely by Bungie.</li>
+    <li><strong>Conversations.</strong> Chats you have with the Ghost are stored on our backend,
+    associated with your Bungie membership id, so they sync across your devices.</li>
+    <li><strong>Microphone / speech (optional).</strong> If you use voice input, speech is
+    transcribed to text so the app can understand your command. The app requests Apple's
+    <strong>on-device</strong> speech recognition, so in the supported languages your audio never
+    leaves your phone. Where your language has no on-device model, Apple's speech framework
+    transcribes it on Apple's servers under Apple's privacy policy. We never store or transmit
+    raw audio ourselves — only the resulting text, and only when you send it to the Ghost.</li>
+  </ul>
+
+  <h2>What we do NOT do</h2>
+  <ul>
+    <li>We do not sell or share your personal data with third parties for advertising.</li>
+    <li>We do not collect your Bungie password.</li>
+    <li>We do not access data unrelated to Destiny.</li>
+  </ul>
+
+  <h2>Third parties</h2>
+  <ul>
+    <li><strong>Bungie API</strong> — game data is read from bungie.net. Your use of Bungie's
+    services is governed by Bungie's own privacy policy and terms.</li>
+    <li><strong>Language model provider</strong> — to generate conversational answers, the text of
+    your message and relevant retrieved game/lore context may be sent to the configured
+    language-model provider (e.g. OpenAI). Do not include sensitive personal information in
+    messages.</li>
+  </ul>
+
+  <h2>Data retention &amp; deletion</h2>
+  <ul>
+    <li>Your stored conversations remain until you delete them in the app or delete your account.</li>
+    <li>Signing out removes your session and stored Bungie tokens from the device.</li>
+    <li><strong>Deleting your account.</strong> In the app, open <strong>Settings → Delete
+    Account</strong>. This permanently erases your synced conversations and the Bungie
+    access/refresh tokens we hold, and immediately invalidates every active session on all your
+    devices. It cannot be undone. Your Destiny account and in-game data are not affected —
+    deletion only removes what this app stored.</li>
+    <li>After deletion we retain a single record — your Bungie membership id and the time of
+    deletion — for the sole purpose of keeping already-issued sign-in tokens from being reused.
+    It contains no conversations, no game data, and no credentials.</li>
+    <li>You may also raise any deletion question on our
+    <a href="https://github.com/CEnnisgit/DestinyAIGhostCompanion/issues">support page</a>.</li>
+  </ul>
+
+  <h2>Security</h2>
+  <p>Bungie tokens and session credentials are transmitted over HTTPS and stored server-side.
+  Sessions are short-lived, signed tokens; the production backend requires a valid session for
+  any access to your data.</p>
+
+  <h2>Children</h2>
+  <p>The app is not directed at children under 13.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or deletion requests: open an issue on our
+  <a href="https://github.com/CEnnisgit/DestinyAIGhostCompanion/issues">GitHub support page</a>.</p>
+</main>
+</body>
+</html>
