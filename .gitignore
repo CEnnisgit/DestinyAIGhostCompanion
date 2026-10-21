@@ -48,3 +48,5 @@ cache/
 
 # Nested local test repo (do not publish)
 Ghost-Testing/
+
+!.env.example

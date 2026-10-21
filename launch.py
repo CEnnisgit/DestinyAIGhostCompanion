@@ -48,7 +48,7 @@ REQUIREMENTS_FILE = REPO_ROOT / "requirements.txt"
 
 OLLAMA_HOST_DEFAULT = "http://127.0.0.1:11434"
 OLLAMA_TAGS_ENDPOINT = "/api/tags"
-XAI_API_KEY = "REDACTED"
+XAI_API_KEY = os.environ.get("XAI_API_KEY", "")  # set via environment or .env (never commit)
 OLLAMA_MODEL = "phi3"
 
 REQUIRED_ENV_VARS = {
@@ -475,7 +475,8 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     # Set additional environment variables for subprocesses
     os.environ["OLLAMA_MODEL"] = OLLAMA_MODEL
-    os.environ["XAI_API_KEY"] = XAI_API_KEY
+    if XAI_API_KEY:
+        os.environ.setdefault("XAI_API_KEY", XAI_API_KEY)
 
     if start_frontend:
         ensure_node_tools_available()
