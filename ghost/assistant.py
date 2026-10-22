@@ -153,7 +153,7 @@ class GhostAssistant:
                     return "ollama"
             except Exception:
                 pass
-        if os.getenv("XAI_API_KEY"):
+        if os.getenv("GHOST_ALLOW_ENV_AI_KEY") == "1" and os.getenv("XAI_API_KEY"):
             return "grok"
         # Default to local fine-tuned wrapper
         return "finetune"

@@ -15,7 +15,8 @@
  * 3) Persist lightweight preferences in localStorage via `useLocalStorage`.
  */
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import axios from 'axios';
+import { client, apiFetch } from './api';
+import Settings from './components/Settings';
 import ChatWindow from './components/ChatWindow';
 import MessageInput from './components/MessageInput';
 // Bungie sign-in only; email/password removed
@@ -27,10 +28,7 @@ import './App.css';
 
 import { API_BASE_URL } from './config';
 
-const client = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 15000,
-});
+
 
 const createMessageId = () => {
   if (typeof window !== 'undefined' && window.crypto?.randomUUID) {
@@ -40,6 +38,7 @@ const createMessageId = () => {
 };
 
 function App() {
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -122,7 +121,7 @@ function App() {
         setApiKeyError(response.data.api_key_error || '');
       }
     } catch (err) {
-      console.error('Failed to check auth status:', err);
+      console.error('Failed to check auth status');
       setIsAuthenticated(false);
       setBungieLinked(false);
       setApiKeyOk(true);
@@ -428,24 +427,6 @@ function App() {
     // Intentionally left blank (no auto auth).
   }, []);
 
-  const saveApiKey = useCallback(async () => {
-    if (!apiKeyInput.trim()) return;
-    setApiKeySaving(true);
-    try {
-      const res = await client.post('/auth/key', { api_key: apiKeyInput.trim() }, { headers });
-      if (res.data && res.data.ok) {
-        setApiKeyInput('');
-        await checkAuthStatus();
-      } else {
-        setApiKeyError((res.data && res.data.error) || 'API key not accepted');
-      }
-    } catch (e) {
-      setApiKeyError(e?.response?.data?.error || e.message || 'Failed to set API key');
-    } finally {
-      setApiKeySaving(false);
-    }
-  }, [apiKeyInput, headers, checkAuthStatus]);
-
   const handleAuthenticate = useCallback(async () => {
     setAuthLoading(true);
     try {
@@ -479,7 +460,7 @@ function App() {
         }
       };
     } catch (err) {
-      console.error('Failed to start authentication:', err);
+
       setError(err.message || 'Failed to start authentication');
       setAuthLoading(false);
     }
@@ -488,33 +469,31 @@ function App() {
   // Handle OAuth callback from postMessage (popup flow)
   React.useEffect(() => {
     const handleMessage = async (event) => {
-      // Allow messages from any localhost/127.0.0.1 (any port, http/https)
-      const isLocalOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\\d+)?$/.test(event.origin);
-      if (!isLocalOrigin) return;
-      
+      if (event.origin !== new URL(API_BASE_URL).origin) return;
+
       if (event.data.type === 'oauth_callback' || event.data.type === 'bungie_oauth') {
         const code = event.data.code;
         if (code) {
           try {
             // Make sure to send the code in the correct format expected by the server
-            const response = await client.post('/oauth/callback', { code: code });
+            const response = await client.post('/oauth/callback', { code: code, state: event.data.state });
             const { token } = response.data;
             if (token) {
               setToken(token);
               setIsAuthenticated(true);
               setBungieLinked(true);
               setAuthLoading(false);
-              
+
               // Notify popup that auth is complete
               if (event.source) {
                 event.source.postMessage({ type: 'oauth_complete' }, '*');
               }
             }
           } catch (err) {
-            console.error('Failed to complete authentication:', err, err.response?.data);
+
             setError(err.response?.data?.detail || 'Authentication failed. Please try again.');
             setAuthLoading(false);
-            
+
             // Close popup even on error after a short delay
             setTimeout(() => {
               if (event.source) {
@@ -538,7 +517,7 @@ function App() {
 
     if (code) {
       // Send the authorization code to the backend
-      client.post('/oauth/callback', { code: code })
+      client.post('/oauth/callback', { code: code, state: urlParams.get('state') })
         .then((response) => {
           const { token } = response.data;
           if (token) {
@@ -553,7 +532,7 @@ function App() {
           window.history.replaceState({}, document.title, window.location.pathname);
         })
         .catch((err) => {
-          console.error('Failed to complete authentication:', err, err.response?.data);
+
           setError(err.response?.data?.detail || 'Authentication failed. Please try again.');
           // If we're in a popup window, close it on error too
           if (window.opener) {
@@ -720,7 +699,7 @@ function App() {
         if (selectedVoice) params.set('voice', selectedVoice);
         if (sessionId) params.set('session_id', sessionId);
 
-        const resp = await fetch(`${API_BASE_URL}/chat/stream?${params.toString()}`, { headers });
+        const resp = await apiFetch(`${API_BASE_URL}/chat/stream?${params.toString()}`, { headers });
         const convId = resp.headers.get('X-Conversation-Id');
         if (convId) {
           setSessionId(convId);
@@ -791,6 +770,8 @@ function App() {
 
   return (
     <div className={`app app--with-sidebar ${emptyState ? 'is-empty' : ''}`}>
+      <button style={{position:"fixed",right:16,top:12,zIndex:1000}} onClick={() => setSettingsOpen(true)}>Settings</button>
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       <TopBar onHamburger={() => setSidebarOpen(true)} />
       <Sidebar
         open={sidebarOpen}

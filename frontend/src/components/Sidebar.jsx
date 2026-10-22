@@ -10,23 +10,7 @@ const Sidebar = ({ open, onClose, conversations, activeId, onNew, onOpen, onDele
           <button className="topbar__hamburger" onClick={onClose} aria-label="Close">✕</button>
         </div>
         <div className="drawer__controls provider-select-group" style={{padding: '0 .75rem'}}>
-          <label htmlFor="provider">Provider</label>
-          <select id="provider" value={provider} onChange={(e)=>onProviderChange && onProviderChange(e.target.value)}>
-            <option value="ollama">Ollama (local)</option>
-            <option value="grok">Grok (xAI)</option>
-            <option value="finetune">Fine-tuned</option>
-          </select>
-          {provider === 'ollama' && (
-            <>
-              <label htmlFor="ollama-model">Model</label>
-              <select id="ollama-model" value={ollamaModel} onChange={(e)=>onOllamaModelChange && onOllamaModelChange(e.target.value)}>
-                {(ollamaModels || []).length === 0 && <option value="">No local models found</option>}
-                {(ollamaModels || []).map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </>
-          )}
+          <p>Choose your AI provider and model in Settings.</p>
           <label htmlFor="persona">Persona</label>
           <select id="persona" value={persona} onChange={(e)=>onPersonaChange && onPersonaChange(e.target.value)}>
             {(personas || []).map((p) => (

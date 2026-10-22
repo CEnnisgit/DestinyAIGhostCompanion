@@ -1,3 +1,4 @@
+import { apiFetch } from '../api';
 import { API_BASE_URL } from '../config';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 
@@ -189,7 +190,7 @@ const MessageInput = ({ onSend, disabled, speakEnabled, onSpeakChange, selectedV
               ? deviceOverride
               : (typeof serverMicDefaultIndex === 'number' ? serverMicDefaultIndex : null),
         };
-        const resp = await fetch(`${API_BASE_URL}/stt/local`, {
+        const resp = await apiFetch(`${API_BASE_URL}/stt/local`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -298,7 +299,7 @@ const MessageInput = ({ onSend, disabled, speakEnabled, onSpeakChange, selectedV
   const sendForTranscription = async (blob) => {
     const formData = new FormData();
     formData.append('file', blob, 'audio.wav');
-    const response = await fetch(`${API_BASE_URL}/stt`, { method: 'POST', body: formData });
+    const response = await apiFetch(`${API_BASE_URL}/stt`, { method: 'POST', body: formData });
     if (!response.ok) {
       const detail = await safeReadJson(response);
       throw new Error(detail?.detail || 'Speech recognition service returned an error.');
