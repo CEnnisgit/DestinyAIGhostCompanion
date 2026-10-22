@@ -133,3 +133,33 @@ def refresh_token(client_id: str, client_secret: str, refresh_token: str) -> dic
     resp = requests.post(TOKEN_URL, data=payload, auth=(client_id, client_secret))
     resp.raise_for_status()
     return resp.json()
+
+
+def generate_pkce():
+    """Return an RFC 7636 verifier and its S256 challenge."""
+    import secrets
+    import hashlib
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('ascii')).digest()).decode().rstrip('=')
+    return verifier, challenge
+
+
+def public_exchange(client_id, code, verifier, secret=None):
+    payload = {'grant_type': 'authorization_code', 'client_id': client_id, 'code': code, 'code_verifier': verifier}
+    if secret:
+        payload['client_secret'] = secret
+    return _safe_token_request(payload)
+
+
+def _safe_token_request(payload):
+    try:
+        response = requests.post(TOKEN_URL, data=payload, timeout=30, allow_redirects=False)
+        if response.status_code != 200:
+            raise ValueError()
+        data = response.json()
+        from .providers import redact
+        data = {k: redact(v, (payload.get('client_secret', ''),)) if isinstance(v, str) else v for k, v in data.items()}
+        return {k: data[k] for k in ('access_token', 'refresh_token', 'expires_in', 'refresh_expires_in', 'membership_id', 'token_type') if k in data}
+    except Exception:
+        pass
+    raise ValueError('Bungie token exchange failed')
