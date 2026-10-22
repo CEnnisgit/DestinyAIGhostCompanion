@@ -20,7 +20,7 @@ a = Analysis(
         # can find it regardless of frozen/runtime layout.
         (str(FRONTEND_BUILD_DIR), 'frontend/build'),
     ],
-    hiddenimports=[],
+    hiddenimports=['server', 'server_auth', 'server_db'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -34,10 +34,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='GhostCompanionLauncher',
     debug=False,
     bootloader_ignore_signals=False,
