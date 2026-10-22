@@ -54,3 +54,35 @@ def test_proxy(monkeypatch):
         r = request(server.app, 'POST', '/oauth/refresh', json={'refresh_token': 'rt'})
         assert r.status_code == 200
         assert post.call_args.kwargs['data']['client_secret'] == 'private-secret'
+
+
+def test_native_redirect_and_session_binding(monkeypatch):
+    import server
+    monkeypatch.setenv('BUNGIE_CLIENT_ID', '123')
+    monkeypatch.setattr(server, 'UI_ORIGINS', ['capacitor://localhost'])
+    headers = {'origin': 'capacitor://localhost'}
+    response = request(server.app, 'GET', '/oauth/authorize?redirect_uri=ghostcompanion://oauth/callback', headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    query = parse_qs(urlparse(data['authorization_url']).query)
+    assert query['redirect_uri'] == ['ghostcompanion://oauth/callback']
+    assert query['code_challenge_method'] == ['S256']
+    payload = {'code': 'abc', 'state': query['state'][0], 'native_session': data['native_session']}
+    assert request(server.app, 'POST', '/oauth/callback', headers=headers, json={**payload, 'native_session': 'wrong'}).status_code == 400
+    assert request(server.app, 'POST', '/oauth/callback', json=payload).status_code == 400
+    verifier = server._oauth_attempts[payload['state']][0]
+    assert server._oauth_attempts[payload['state']][2] == 'ghostcompanion://oauth/callback'
+    with patch('server.public_exchange', return_value={'access_token': 'atk'}) as exchange, patch('server.get_user_by_email', return_value={'id': 7}), patch('server.upsert_bungie_tokens'), patch('server.create_jwt', return_value='jwt'):
+        monkeypatch.delenv('GHOST_BUNGIE_TOKEN_PROXY', raising=False)
+        assert request(server.app, 'POST', '/oauth/callback', headers=headers, json=payload).status_code == 200
+        assert exchange.call_args.args[2] == verifier
+        assert exchange.call_args.args[-1] is None
+        assert request(server.app, 'POST', '/oauth/callback', headers=headers, json=payload).status_code == 400
+
+
+def test_native_redirect_rejects_other_targets(monkeypatch):
+    import server
+    monkeypatch.setenv('BUNGIE_CLIENT_ID', '123')
+    assert request(server.app, 'GET', '/oauth/authorize?redirect_uri=evil://callback').status_code == 400
+    monkeypatch.setattr(server, 'UI_ORIGINS', [])
+    assert request(server.app, 'GET', '/oauth/authorize?redirect_uri=ghostcompanion://oauth/callback', headers={'origin': 'capacitor://localhost'}).status_code == 400

@@ -315,13 +315,19 @@ def oauth_authorize(request: Request):
             _oauth_attempts.pop(old, None)
     if len(_oauth_attempts) >= 10000:
         raise HTTPException(429, "Too many pending OAuth attempts")
-    redirect = os.getenv("BUNGIE_REDIRECT_URI") or str(request.url_for("oauth_callback"))
+    native = request.query_params.get("redirect_uri") == "ghostcompanion://oauth/callback"
+    if request.query_params.get("redirect_uri") and not native:
+        raise HTTPException(400, "Unrecognized OAuth redirect")
+    redirect = "ghostcompanion://oauth/callback" if native else (os.getenv("BUNGIE_REDIRECT_URI") or str(request.url_for("oauth_callback")))
     origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
     if origin not in UI_ORIGINS and origin != str(request.base_url).rstrip("/"):
         raise HTTPException(400, "Unrecognized UI origin")
-    _oauth_attempts[state] = (verifier, cid, redirect, now + 600, origin)
+    if native and (origin != "capacitor://localhost" or origin not in UI_ORIGINS):
+        raise HTTPException(400, "Native OAuth requires configured Capacitor origin")
+    native_session = secrets.token_urlsafe(32) if native else None
+    _oauth_attempts[state] = (verifier, cid, redirect, now + 600, origin, native_session)
     url = "https://www.bungie.net/en/OAuth/Authorize?" + urlencode(dict(client_id=cid, response_type="code", redirect_uri=redirect, state=state, code_challenge=challenge, code_challenge_method="S256"))
-    response = JSONResponse({"authorization_url": url, "redirect_uri": redirect})
+    response = JSONResponse({"authorization_url": url, "redirect_uri": redirect, **({"native_session": native_session} if native else {})})
     response.set_cookie("ghost_oauth_state", state, httponly=True, secure=request.url.scheme == "https", samesite="lax", max_age=600)
     return response
 
@@ -340,11 +346,18 @@ def oauth_callback(code: str | None = None, state: str | None = None):
 def _consume_oauth(request, payload):
     state = str(payload.get("state") or "")
     cookie = request.cookies.get("ghost_oauth_state", "")
-    if not state or not secrets.compare_digest(state, cookie):
+    attempt = _oauth_attempts.get(state)
+    native_session = attempt[5] if attempt and len(attempt) > 5 else None
+    if native_session:
+        valid = request.headers.get("origin") == attempt[4] and secrets.compare_digest(native_session, str(payload.get("native_session") or ""))
+    else:
+        valid = bool(state) and secrets.compare_digest(state, cookie)
+    if not valid:
         raise HTTPException(400, "OAuth state mismatch")
     attempt = _oauth_attempts.pop(state, None)
     if not attempt or attempt[3] < _time.time():
         raise HTTPException(400, "OAuth state expired or already used")
+    attempt = attempt[:5]
     return attempt
 
 def _proxy_secret():
