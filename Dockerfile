@@ -1,4 +1,4 @@
-FROM node:20-slim AS frontend
+FROM node:22-slim AS frontend
 WORKDIR /ui
 COPY frontend/package*.json ./
 RUN npm ci
@@ -6,11 +6,13 @@ COPY frontend/ ./
 ENV VITE_API_URL=/
 RUN npm run build
 
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim-trixie AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 GHOST_MODE=hosted PORT=8000
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home --uid 10001 ghost \
     && mkdir -p /app/data /app/logs \
     && chown ghost:ghost /app/data /app/logs

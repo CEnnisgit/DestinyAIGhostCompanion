@@ -1,0 +1,38 @@
+name: Docker security
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: docker build --pull -t ghost-ci .
+      - name: Check hosted health and security headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name ghost-ci -p 8000:8000 -e GHOST_MODE=hosted -e GHOST_UI_ORIGINS=https://dummy.invalid ghost-ci
+          trap 'docker logs ghost-ci; docker rm -f ghost-ci' EXIT
+          ready=false
+          for attempt in {1..60}; do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health || true)" = 200 ]; then ready=true; break; fi
+            sleep 2
+          done
+          "$ready"
+          curl -fsS -D headers.txt -o /dev/null http://localhost:8000/health
+          tr -d '\r' < headers.txt > normalized.txt
+          grep -Eiq '^Strict-Transport-Security: .+' normalized.txt
+          grep -Eiq "^Content-Security-Policy: .*frame-ancestors 'none'" normalized.txt
+          grep -Eiq '^X-Content-Type-Options: nosniff$' normalized.txt
+          grep -Eiq '^Referrer-Policy: .+' normalized.txt
+          grep -Eiq '^X-Frame-Options: DENY$' normalized.txt
+      # v0.35.0 was unaffected per GHSA-69fq-xp46-6x23. Verified with git ls-remote.
+      - uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ghost-ci
+          version: v0.69.3
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
