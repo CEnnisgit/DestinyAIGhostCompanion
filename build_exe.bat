@@ -7,7 +7,11 @@ if "%~1"=="-h" goto :help
 if "%~1"=="--help" goto :help
 
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+if "%~1"=="--desktop" (
+    python -m pip install -r requirements-desktop.txt || exit /b 1
+) else (
+    python -m pip install -r requirements.txt || exit /b 1
+)
 
 if "%~1"=="--desktop" goto :desktop
 
