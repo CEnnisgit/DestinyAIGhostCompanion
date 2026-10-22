@@ -116,6 +116,11 @@ class BungieClient:
         if access_token is not None:
             self.set_access_token(access_token)
 
+        # Hosted clients keep even public definitions request-scoped.
+        self._defs_disk = {}
+        if os.getenv("GHOST_MODE") == "hosted":
+            return
+
         # Disk cache for definitions
         try:
             cache_dir = Path(os.getcwd()) / "cache"

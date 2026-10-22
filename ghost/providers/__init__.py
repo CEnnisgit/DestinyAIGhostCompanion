@@ -50,6 +50,13 @@ class Provider:
             raise ProviderError('Unknown AI provider')
         base, default_model = defaults[self.name]
         self.base_url = validate_base_url(base_url or base)
+        if os.getenv('GHOST_MODE') == 'hosted':
+            if self.name == 'ollama':
+                raise ProviderError('Local AI providers are disabled in hosted mode')
+            allowed = {'https://api.x.ai/v1', 'https://api.openai.com/v1', 'https://api.anthropic.com/v1'}
+            allowed.update(v.strip().rstrip('/') for v in os.getenv('GHOST_AI_BASE_URLS', '').split(',') if v.strip())
+            if self.base_url not in allowed or urlsplit(self.base_url).scheme != 'https':
+                raise ProviderError('AI base URL is not enabled by the hosted administrator')
         self.model = model or default_model
         if not self.model:
             raise ProviderError('AI model is required')

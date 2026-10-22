@@ -56,13 +56,13 @@ def create_jwt(user_id: int, email: str) -> str:
     """Mint a signed JWT containing subject (`sub`) and email claims."""
     now = int(time.time())
     payload = {"sub": str(user_id), "email": email, "iat": now, "exp": now + JWT_TTL}
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+    return jwt.encode(payload, os.getenv("JWT_SECRET", JWT_SECRET), algorithm=JWT_ALG)
 
 
 def decode_jwt(token: str) -> Optional[dict]:
     """Decode and verify a JWT; returns claims or None on failure."""
     try:
-        data = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        data = jwt.decode(token, os.getenv("JWT_SECRET", JWT_SECRET), algorithms=[JWT_ALG])
         return data
     except Exception:
         return None

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 from typing import Dict
+from types import MappingProxyType
 
 import requests
 
@@ -49,6 +50,8 @@ def save_tokens(tokens: Dict[str, str]) -> None:
         Mapping containing ``access_token`` and ``refresh_token``.
     """
 
+    if os.getenv("GHOST_MODE") == "hosted":
+        raise RuntimeError("File token storage disabled in hosted mode")
     key = _get_key()
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
     plaintext = json.dumps(tokens).encode()
@@ -63,7 +66,7 @@ def save_tokens(tokens: Dict[str, str]) -> None:
 def load_tokens() -> Dict[str, str]:
     """Load tokens from the encrypted file if present."""
 
-    if not TOKEN_FILE.exists():
+    if os.getenv("GHOST_MODE") == "hosted" or not TOKEN_FILE.exists():
         return {}
     try:
         key = _get_key()
@@ -74,8 +77,8 @@ def load_tokens() -> Dict[str, str]:
     return json.loads(plaintext.decode())
 
 
-# Load tokens at import time so callers can access ``STORED_TOKENS`` directly.
-STORED_TOKENS: Dict[str, str] = load_tokens()
+# Read-only legacy desktop snapshot. Hosted assistants never consume it.
+STORED_TOKENS = MappingProxyType(load_tokens())
 
 
 def get_authorization_url(

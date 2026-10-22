@@ -41,7 +41,9 @@ def get_repo_root() -> Path:
 
 def get_state_dir() -> Path:
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        state = Path.home() / ".ghost-companion"
+        state.mkdir(parents=True, exist_ok=True)
+        return state
     # For dev runs, keep .env in repo root
     return get_repo_root()
 

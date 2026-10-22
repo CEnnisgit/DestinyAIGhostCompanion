@@ -50,3 +50,7 @@ cache/
 Ghost-Testing/
 
 !.env.example
+
+# Browser test artifacts
+frontend/test-results/
+frontend/playwright-report/

@@ -61,7 +61,7 @@ class GhostAssistant:
         """
         self._bungie = bungie_client
         self._api_key = api_key
-        self._current_tokens: dict | None = auth.STORED_TOKENS or None
+        self._current_tokens: dict | None = (dict(auth.STORED_TOKENS) or None) if os.getenv("GHOST_MODE", "desktop") != "hosted" else None
         if bungie_client is not None and self._current_tokens:
             bungie_client.authenticate_user(self._current_tokens)
         # Defer model client instantiation until used

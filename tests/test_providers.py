@@ -106,7 +106,7 @@ def test_chat_key_never_reaches_shared_assistant_or_storage(monkeypatch):
         assert r.status_code == 200
         assert 'request-only-key' not in r.text
         save.assert_not_called()
-        assert 'request-only-key' not in repr(vars(server.assistant))
+        assert not hasattr(server, 'assistant')
 
 
 def test_stream_uses_request_credentials(monkeypatch):
@@ -121,4 +121,4 @@ def test_stream_uses_request_credentials(monkeypatch):
         assert r.text == 'echo [REDACTED]'
         assert post.call_args.kwargs['json']['model'] == 'chosen-model'
         assert 'stream-private-key' not in repr(save.call_args_list)
-        assert 'stream-private-key' not in repr(vars(server.assistant))
+        assert not hasattr(server, 'assistant')
