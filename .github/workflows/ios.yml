@@ -39,8 +39,10 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           APP="$RUNNER_TEMP/ghost-derived/Build/Products/Debug-iphonesimulator/App.app"
           xcrun simctl install "$UDID" "$APP"
-          xcrun simctl launch "$UDID" com.example.ghostcompanion
-          sleep 15
+          # Springboard keeps showing the boot logo for a while after bootstatus; wait it out.
+          sleep 60
+          xcrun simctl launch --terminate-running-process "$UDID" com.example.ghostcompanion
+          sleep 25
           xcrun simctl io "$UDID" screenshot ios-sim.png
           ditto -c -k --sequesterRsrc --keepParent "$APP" GhostCompanion-simulator.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
