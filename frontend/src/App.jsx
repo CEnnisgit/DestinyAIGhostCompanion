@@ -804,7 +804,7 @@ function App() {
 
   return (
     <div className={`app app--with-sidebar ${emptyState ? 'is-empty' : ''}`}>
-      <button style={{position:"fixed",right:16,top:12,zIndex:1001}} onClick={() => setSettingsOpen(true)}>Settings</button>
+      <button className="settings-fab" onClick={() => setSettingsOpen(true)}>Settings</button>
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       <TopBar onHamburger={() => setSidebarOpen(true)} />
       <Sidebar
