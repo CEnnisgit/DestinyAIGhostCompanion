@@ -13,6 +13,8 @@ COPY requirements.txt ./
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall -y setuptools wheel pip \
+    && rm -rf /usr/local/lib/python3.11/ensurepip/_bundled \
     && useradd --create-home --uid 10001 ghost \
     && mkdir -p /app/data /app/logs \
     && chown ghost:ghost /app/data /app/logs
