@@ -12,7 +12,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name ghost-ci -p 8000:8000 -e GHOST_MODE=hosted -e GHOST_UI_ORIGINS=https://dummy.invalid ghost-ci
+          docker run -d --name ghost-ci -p 8000:8000 -e JWT_SECRET="$(openssl rand -hex 32)" -e GHOST_MODE=hosted -e GHOST_UI_ORIGINS=https://dummy.invalid ghost-ci
           trap 'docker logs ghost-ci; docker rm -f ghost-ci' EXIT
           ready=false
           for attempt in {1..60}; do
