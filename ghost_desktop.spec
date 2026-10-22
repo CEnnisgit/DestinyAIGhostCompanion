@@ -2,6 +2,7 @@
 """PyInstaller spec for bundling the Ghost Companion desktop app."""
 
 from pathlib import Path
+import sys
 
 block_cipher = None
 
@@ -24,11 +25,11 @@ if FRONTEND_BUILD_DIR.exists():
     datas_list.append((str(FRONTEND_BUILD_DIR), 'frontend/build'))
 
 a = Analysis(
-    ['ghost/desktop.py'],
+    ['desktop_launch.py'],
     pathex=[str(REPO_ROOT)],
     binaries=[],
     datas=datas_list,
-    hiddenimports=[],
+    hiddenimports=['server', 'server_auth', 'server_db'] + collect_submodules('keyring.backends'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -42,10 +43,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='GhostCompanion',
     debug=False,
     bootloader_ignore_signals=False,
@@ -70,3 +69,6 @@ coll = COLLECT(
     upx_exclude=[],
     name='GhostCompanion',
 )
+
+if sys.platform == 'darwin':
+    app = BUNDLE(coll, name='Ghost Companion.app', bundle_identifier='com.ghostcompanion.desktop')

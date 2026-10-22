@@ -17,6 +17,9 @@ class FineTuneClient:
         pass
 
     def generate(self, prompt: str) -> str:
+        import os
+        if os.getenv("GHOST_MODE") == "hosted":
+            raise RuntimeError("Fine-tuning is disabled in hosted mode")
         from inference_with_api import generate_response
 
         resp = generate_response(prompt)

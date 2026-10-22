@@ -28,6 +28,8 @@ def _normalize(text: str) -> list[str]:
 
 def _load_docs() -> list[tuple[str, str]]:
     global _DOCS
+    if os.getenv("GHOST_MODE") == "hosted":
+        return []
     if _DOCS is not None:
         return _DOCS
     docs: list[tuple[str, str]] = []

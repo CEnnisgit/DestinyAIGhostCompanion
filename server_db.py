@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Iterable, Any
 
-DB_PATH = Path("data/app.db")
+import os
+import sys
+_DEFAULT_DB = Path.home() / ".ghost-companion" / "data" / "app.db" if getattr(sys, "frozen", False) else Path("data/app.db")
+DB_PATH = Path(os.getenv("GHOST_DB_PATH", str(_DEFAULT_DB)))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -142,6 +145,10 @@ def get_bungie_tokens(user_id: int) -> dict[str, Any] | None:
 def ensure_conversation(conversation_id: str, user_id: int, name: str, provider: str | None) -> None:
     """Create the conversation if absent; otherwise bump timestamp/provider."""
     with get_conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+        owner = con.execute("SELECT user_id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        if owner and owner["user_id"] != user_id:
+            raise PermissionError("Conversation belongs to another user")
         con.execute(
             """
             INSERT INTO conversations (id, user_id, name, provider)

@@ -15,7 +15,7 @@
  * 3) Persist lightweight preferences in localStorage via `useLocalStorage`.
  */
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { client, apiFetch } from './api';
+import { client, apiFetch, loadCredentialStorage } from './api';
 import Settings from './components/Settings';
 import ChatWindow from './components/ChatWindow';
 import MessageInput from './components/MessageInput';
@@ -38,6 +38,7 @@ const createMessageId = () => {
 };
 
 function App() {
+  React.useEffect(() => { loadCredentialStorage().catch(() => {}); }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -770,7 +771,7 @@ function App() {
 
   return (
     <div className={`app app--with-sidebar ${emptyState ? 'is-empty' : ''}`}>
-      <button style={{position:"fixed",right:16,top:12,zIndex:1000}} onClick={() => setSettingsOpen(true)}>Settings</button>
+      <button style={{position:"fixed",right:16,top:12,zIndex:1001}} onClick={() => setSettingsOpen(true)}>Settings</button>
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       <TopBar onHamburger={() => setSidebarOpen(true)} />
       <Sidebar

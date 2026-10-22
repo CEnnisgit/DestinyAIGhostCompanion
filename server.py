@@ -16,7 +16,7 @@ from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Header
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import requests as _requests
@@ -68,8 +68,9 @@ load_dotenv(REPO_ROOT / ".env")
 # `frontend/` directly. Support both to avoid mismatches.
 _FE_CANDIDATES = [
     REPO_ROOT / "frontend" / "build",
-    REPO_ROOT / "frontend",
 ]
+if getattr(sys, "frozen", False):
+    _FE_CANDIDATES.append(REPO_ROOT / "frontend")
 FRONTEND_BUILD_DIR = None
 for _cand in _FE_CANDIDATES:
     try:
@@ -87,9 +88,28 @@ from ghost.auth import generate_pkce, public_exchange, _safe_token_request
 import secrets
 from urllib.parse import urlencode
 
-app = FastAPI()
+from contextlib import asynccontextmanager
+from ghost.security import hosted, loopback, SecurityMiddleware
+
+@asynccontextmanager
+async def lifespan(app):
+    if hosted() and (not os.getenv("JWT_SECRET") or os.getenv("JWT_SECRET") == "dev-secret-change-me"):
+        raise RuntimeError("Hosted mode requires a strong JWT_SECRET")
+    init_db()
+    if not hosted():
+        _ensure_ollama_on_startup()
+    try:
+        yield
+    finally:
+        _oauth_attempts.clear()
+
+app = FastAPI(lifespan=lifespan)
+from ghost.local_secrets import router as local_router
+app.include_router(local_router)
 from fastapi.middleware.cors import CORSMiddleware
-UI_ORIGINS = [v.strip() for v in (os.getenv("GHOST_UI_ORIGINS") or "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:5173,http://localhost:5173").split(",") if v.strip()]
+UI_ORIGINS = [v.strip() for v in (os.getenv("GHOST_UI_ORIGINS") or ("" if hosted() else "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:5173,http://localhost:5173")).split(",") if v.strip()]
+if hosted() and any("*" in origin for origin in UI_ORIGINS):
+    raise RuntimeError("Hosted CORS requires explicit origins")
 app.add_middleware(CORSMiddleware, allow_origins=UI_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Conversation-Id"])
 
 
@@ -105,8 +125,8 @@ async def bungie_config_error_handler(request: Request, exc: BungieConfigError) 
 
 
 # Logging
-LOG_DIR = REPO_ROOT / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR = (Path.home() / ".ghost-companion" if getattr(sys, "frozen", False) else REPO_ROOT) / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 log_file = LOG_DIR / "server.log"
 _file_handler = RotatingFileHandler(str(log_file), maxBytes=1_000_000, backupCount=3)
 _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -115,12 +135,6 @@ for handler in logging.getLogger().handlers:
     handler.addFilter(RedactionFilter())
 logger = logging.getLogger("ghost")
 logger.info("Server started; logging to %s", log_file)
-
-# Ensure DB exists for token-backed sessions
-try:
-    init_db()
-except Exception:
-    logger.exception("DB init failed")
 
 # -------------------- Ollama auto-start helpers --------------------
 
@@ -173,7 +187,6 @@ def _maybe_pull_model_async(model: str) -> None:
     t.start()
 
 
-@app.on_event("startup")
 def _ensure_ollama_on_startup() -> None:
     # If Ollama is configured via env but not responding, try to start it
     if os.getenv("OLLAMA_MODEL") and not _ollama_up():
@@ -185,10 +198,6 @@ def _ensure_ollama_on_startup() -> None:
             _time.sleep(0.5)
         # Opportunistic pull of the configured model in background
         _maybe_pull_model_async(os.getenv("OLLAMA_MODEL", ""))
-
-
-# Single assistant instance (lazy model clients inside)
-assistant = GhostAssistant()
 
 
 @app.middleware("http")
@@ -205,7 +214,7 @@ async def log_requests(request, call_next):
 
 
 # Decide whether to serve the built UI (mounted at end)
-SERVE_UI = bool(getattr(sys, "frozen", False) or os.getenv("SERVE_FRONTEND") == "1") and FRONTEND_BUILD_DIR.exists()
+SERVE_UI = (FRONTEND_BUILD_DIR / "index.html").exists()
 
 
 class ChatRequest(BaseModel):
@@ -224,7 +233,7 @@ def health() -> dict[str, object]:
     return {
         "ok": True,
         "ui": bool(SERVE_UI),
-        "log": str(log_file),
+        **({} if hosted() else {"log": str(log_file)}),
         "ts": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -301,9 +310,11 @@ def oauth_authorize(request: Request):
     verifier, challenge = generate_pkce()
     state = secrets.token_urlsafe(32)
     now = _time.time()
-    for old in list(_oauth_attempts):
-        if _oauth_attempts[old][3] < now:
-            del _oauth_attempts[old]
+    for old, attempt in list(_oauth_attempts.items()):
+        if attempt[3] < now:
+            _oauth_attempts.pop(old, None)
+    if len(_oauth_attempts) >= 10000:
+        raise HTTPException(429, "Too many pending OAuth attempts")
     redirect = os.getenv("BUNGIE_REDIRECT_URI") or str(request.url_for("oauth_callback"))
     origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
     if origin not in UI_ORIGINS and origin != str(request.base_url).rstrip("/"):
@@ -320,7 +331,11 @@ def oauth_callback(code: str | None = None, state: str | None = None):
     payload = json_dumps(dict(type="bungie_oauth", code=code or "", state=state or "")).replace("<", "\\u003c")
     attempt = _oauth_attempts.get(state)
     origin = json_dumps(attempt[4] if attempt else "")
-    return HTMLResponse("<!doctype html><title>Ghost Companion</title><script>const p=" + payload + ";if(window.opener){window.opener.postMessage(p," + origin + ");window.addEventListener('message',function(e){if(e.source===window.opener && e.origin===" + origin + " && e.data.type==='oauth_complete'){window.close();}});}else{document.body.textContent='Return to Ghost Companion and try signing in again.'}</script>")
+    html = "<!doctype html><title>Ghost Companion</title><script>const p=" + payload + ";if(window.opener){window.opener.postMessage(p," + origin + ");window.addEventListener('message',function(e){if(e.source===window.opener && e.origin===" + origin + " && e.data.type==='oauth_complete'){window.close();}});}else{document.body.textContent='Return to Ghost Companion and try signing in again.'}</script>"
+    import hashlib, base64
+    script = html.split('<script>', 1)[1].split('</script>', 1)[0]
+    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+    return HTMLResponse(html, headers={"Content-Security-Policy": f"default-src 'self'; script-src 'sha256-{digest}'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"})
 
 def _consume_oauth(request, payload):
     state = str(payload.get("state") or "")
@@ -346,7 +361,13 @@ def oauth_callback_post(request: Request, payload: dict):
         tok = public_exchange(cid, str(payload.get("code") or ""), verifier, secret)
     except ValueError:
         raise HTTPException(400, "Bungie token exchange failed") from None
-    email = "desktop@local"
+    if hosted():
+        membership = tok.get("membership_id")
+        if not membership:
+            raise HTTPException(400, "Bungie membership ID missing")
+        email = f"bungie:{membership}"
+    else:
+        email = "desktop@local"
     row = get_user_by_email(email)
     if not row:
         create_user(email, "local")
@@ -469,6 +490,8 @@ def api_chat_stream(
     voice: str | None = None,
     authorization: str | None = Header(None),
 ):
+    if hosted() and speak:
+        raise HTTPException(403, "Server audio is disabled in hosted mode")
     user = _require_user(authorization)
     uid = int(user["id"])  # type: ignore[index]
     conv_id = session_id or f"conv-{__import__('uuid').uuid4().hex}"
@@ -477,7 +500,10 @@ def api_chat_stream(
     model = request.headers.get("x-ai-model") or model
     if provider_key == "ollama" and model:
         provider_key = f"ollama:{model}"
-    ensure_conversation(conv_id, uid, name="Chat", provider=provider_key or provider)
+    try:
+        ensure_conversation(conv_id, uid, name="Chat", provider=provider_key or provider)
+    except PermissionError:
+        raise HTTPException(403, "Conversation belongs to another user") from None
 
     # Persist user message
     append_message(conv_id, f"msg-{__import__('uuid').uuid4().hex}", "user", message)
@@ -771,4 +797,17 @@ def stt_local(payload: LocalSttRequest) -> dict[str, object]:
 
 # Mount static last so API routes like /auth/* remain reachable
 if SERVE_UI:
-    app.mount("/", StaticFiles(directory=str(FRONTEND_BUILD_DIR), html=True), name="static")
+    if (FRONTEND_BUILD_DIR / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(FRONTEND_BUILD_DIR / "assets")), name="assets")
+
+    @app.get("/{path:path}")
+    def frontend(path: str):
+        candidate = (FRONTEND_BUILD_DIR / path).resolve()
+        if candidate.is_relative_to(FRONTEND_BUILD_DIR.resolve()) and candidate.is_file():
+            return FileResponse(candidate)
+        if path.startswith(("local/", "api/", "oauth/", "auth/")):
+            raise HTTPException(404)
+        return FileResponse(FRONTEND_BUILD_DIR / "index.html")
+
+# Wrap CORS and all routes so preflight and rejected requests also receive headers.
+app.add_middleware(SecurityMiddleware, allowed_origins=UI_ORIGINS)

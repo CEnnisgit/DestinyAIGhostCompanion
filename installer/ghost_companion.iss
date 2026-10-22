@@ -20,7 +20,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-OutputDir=dist\installer
+OutputDir=..\dist\installer
 OutputBaseFilename=GhostCompanion-Setup-{#AppVersion}
 ; Optional: provide an icon file
 ; SetupIconFile=assets\icon.ico
@@ -35,7 +35,7 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "A
 
 [Files]
 ; Point this to the PyInstaller output folder (onefolder mode is recommended)
-Source: "dist\GhostCompanion\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+Source: "..\dist\GhostCompanion\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\GhostCompanion.exe"
