@@ -1,7 +1,12 @@
+import { Capacitor } from '@capacitor/core';
+import { SecureStorage } from '@aparajita/capacitor-secure-storage';
 import { useEffect, useState } from 'react';
 
 const useLocalStorage = (key, defaultValue) => {
+  const nativeSecret = Capacitor.isNativePlatform() && key === 'ghost-companion-token';
+  const [nativeReady, setNativeReady] = useState(!nativeSecret);
   const [storedValue, setStoredValue] = useState(() => {
+    if (nativeSecret) return defaultValue;
     try {
       const item = window.localStorage.getItem(key);
       if (item === null) return defaultValue;
@@ -22,6 +27,26 @@ const useLocalStorage = (key, defaultValue) => {
   });
 
   useEffect(() => {
+    if (!nativeSecret) return;
+    let mounted = true;
+    SecureStorage.get(key).then(async value => {
+      const legacy = window.localStorage.getItem(key);
+      const restored = value ?? (legacy ? JSON.parse(legacy) : defaultValue);
+      if (restored) await SecureStorage.set(key, restored, false, false);
+      window.localStorage.removeItem(key);
+      if (mounted) { setStoredValue(restored); setNativeReady(true); }
+    }).catch(error => console.error('Secure storage unavailable', error));
+    return () => { mounted = false; };
+  }, [key, nativeSecret]);
+
+  useEffect(() => {
+    if (nativeSecret) {
+      if (nativeReady) {
+        const write = storedValue ? SecureStorage.set(key, storedValue, false, false) : SecureStorage.remove(key);
+        write.catch(error => console.error('Secure storage write failed', error));
+      }
+      return;
+    }
     try {
       if (storedValue === undefined || storedValue === '') {
         window.localStorage.removeItem(key);
@@ -31,7 +56,7 @@ const useLocalStorage = (key, defaultValue) => {
     } catch (error) {
       console.warn('Failed to write to localStorage', error);
     }
-  }, [key, storedValue]);
+  }, [key, storedValue, nativeSecret, nativeReady]);
 
   return [storedValue, setStoredValue];
 };

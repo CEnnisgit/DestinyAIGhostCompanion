@@ -181,3 +181,28 @@ def test_hosted_does_not_load_local_caches(server, monkeypatch, tmp_path):
     first._profile_cache['private'] = 'private'
     assert second._profile_cache == {}
     assert not (tmp_path / 'cache').exists()
+
+
+def test_configured_capacitor_cors(monkeypatch):
+    import importlib
+    import server
+    monkeypatch.setenv('GHOST_MODE', 'hosted')
+    monkeypatch.setenv('GHOST_UI_ORIGINS', 'capacitor://localhost')
+    importlib.reload(server)
+    try:
+        response = request(server.app, 'OPTIONS', '/oauth/authorize', headers={
+            'origin': 'capacitor://localhost',
+            'access-control-request-method': 'GET',
+            'access-control-request-headers': 'x-bungie-client-id',
+        })
+        assert response.status_code == 200
+        assert response.headers['access-control-allow-origin'] == 'capacitor://localhost'
+        assert response.headers['access-control-allow-credentials'] == 'true'
+        denied = request(server.app, 'OPTIONS', '/oauth/authorize', headers={
+            'origin': 'capacitor://untrusted', 'access-control-request-method': 'GET',
+        })
+        assert denied.status_code == 400
+        assert 'access-control-allow-origin' not in denied.headers
+    finally:
+        monkeypatch.undo()
+        importlib.reload(server)

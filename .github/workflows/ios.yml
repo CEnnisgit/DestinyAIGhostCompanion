@@ -1,0 +1,54 @@
+name: iOS simulator
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['frontend/**', '.github/workflows/ios.yml', 'docs/IOS.md']
+permissions:
+  contents: read
+jobs:
+  simulator:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build:ios
+        env:
+          VITE_API_URL: https://example.invalid
+      - run: npx cap sync ios
+      - name: Build unsigned simulator app
+        run: >-
+          xcodebuild -project ios/App/App.xcodeproj -scheme App
+          -configuration Debug -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/ghost-derived"
+          CODE_SIGNING_ALLOWED=NO build
+      - name: Launch on available iPhone and capture screenshot
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for devices in d["devices"].values() for v in devices if v["isAvailable"] and "iPhone" in v["name"]))')
+          STATE=$(xcrun simctl list devices -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["state"] for devices in d["devices"].values() for v in devices if v["udid"] == sys.argv[1]))' "$UDID")
+          if [ "$STATE" != Booted ]; then xcrun simctl boot "$UDID"; fi
+          xcrun simctl bootstatus "$UDID" -b
+          APP="$RUNNER_TEMP/ghost-derived/Build/Products/Debug-iphonesimulator/App.app"
+          xcrun simctl install "$UDID" "$APP"
+          # Springboard keeps showing the boot logo for a while after bootstatus; wait it out.
+          sleep 60
+          xcrun simctl launch --terminate-running-process "$UDID" com.example.ghostcompanion
+          sleep 25
+          xcrun simctl io "$UDID" screenshot ios-sim.png
+          ditto -c -k --sequesterRsrc --keepParent "$APP" GhostCompanion-simulator.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: GhostCompanion-ios-simulator
+          path: |
+            frontend/GhostCompanion-simulator.zip
+            frontend/ios-sim.png
+          if-no-files-found: error

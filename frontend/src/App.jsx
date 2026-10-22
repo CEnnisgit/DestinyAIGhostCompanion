@@ -1,3 +1,6 @@
+import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
+import { App as NativeApp } from '@capacitor/app';
 /**
  * App.js — Main UI composition for Ghost Companion.
  *
@@ -431,9 +434,17 @@ function App() {
   const handleAuthenticate = useCallback(async () => {
     setAuthLoading(true);
     try {
-      const response = await client.get('/oauth/authorize');
+      const response = await client.get('/oauth/authorize', { params: Capacitor.isNativePlatform() ? { redirect_uri: 'ghostcompanion://oauth/callback' } : {} });
       const authUrl = response.data.authorization_url;
 
+      if (Capacitor.isNativePlatform()) {
+        sessionStorage.setItem('ghost-native-oauth', JSON.stringify({
+          state: new URL(authUrl).searchParams.get('state'),
+          proof: response.data.native_session, expires: Date.now() + 600000,
+        }));
+        await Browser.open({ url: authUrl });
+        return;
+      }
       // Open OAuth URL in new window
       const authWindow = window.open(
         authUrl,
@@ -467,10 +478,32 @@ function App() {
     }
   }, []);
 
+  React.useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = NativeApp.addListener('appUrlOpen', async ({ url }) => {
+      const callback = new URL(url);
+      if (callback.protocol !== 'ghostcompanion:' || callback.host !== 'oauth' || callback.pathname !== '/callback') return;
+      try {
+        const pending = JSON.parse(sessionStorage.getItem('ghost-native-oauth') || 'null');
+        if (!pending || pending.expires < Date.now() || callback.searchParams.get('state') !== pending.state) throw new Error('OAuth state mismatch');
+        sessionStorage.removeItem('ghost-native-oauth');
+        if (!callback.searchParams.get('code')) throw new Error('Bungie sign-in cancelled');
+        const { data } = await client.post('/oauth/callback', {
+          code: callback.searchParams.get('code'), state: pending.state, native_session: pending.proof,
+        });
+        setToken(data.token);
+        setIsAuthenticated(true);
+        setBungieLinked(true);
+      } catch (err) { setError(err.message || 'Authentication failed'); }
+      finally { setAuthLoading(false); await Browser.close(); }
+    });
+    return () => { listener.then(handle => handle.remove()); };
+  }, [setToken]);
+
   // Handle OAuth callback from postMessage (popup flow)
   React.useEffect(() => {
     const handleMessage = async (event) => {
-      if (event.origin !== new URL(API_BASE_URL).origin) return;
+      if (event.origin !== new URL(API_BASE_URL || "/", window.location.href).origin) return;
 
       if (event.data.type === 'oauth_callback' || event.data.type === 'bungie_oauth') {
         const code = event.data.code;
@@ -771,7 +804,7 @@ function App() {
 
   return (
     <div className={`app app--with-sidebar ${emptyState ? 'is-empty' : ''}`}>
-      <button style={{position:"fixed",right:16,top:12,zIndex:1001}} onClick={() => setSettingsOpen(true)}>Settings</button>
+      <button className="settings-fab" onClick={() => setSettingsOpen(true)}>Settings</button>
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       <TopBar onHamburger={() => setSidebarOpen(true)} />
       <Sidebar

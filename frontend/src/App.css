@@ -27,6 +27,8 @@ body {
   margin: 0 auto;
   min-height: 100vh;
   padding: 1.5rem;
+  padding-top: calc(1.5rem + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
   gap: 1.5rem;
 }
 
@@ -47,8 +49,8 @@ body {
 /* Floating hamburger button (always visible) */
 .hamburger-fab {
   position: fixed;
-  top: 12px;
-  left: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: calc(12px + env(safe-area-inset-left, 0px));
   z-index: 60;
   width: 40px;
   height: 40px;
@@ -72,6 +74,7 @@ body {
 }
 .drawer {
   position: fixed;
+  padding-top: env(safe-area-inset-top, 0px);
   inset: 0 auto 0 0;
   width: min(320px, 92vw);
   background: rgba(15,23,42,0.95);
@@ -526,6 +529,8 @@ body {
 @media (max-width: 768px) {
   .app {
     padding: 1rem;
+    padding-top: calc(1rem + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
     grid-template-columns: 1fr;
   }
 
@@ -639,3 +644,14 @@ body {
 .message-input__mic-status{ display:flex; flex-direction:column; margin-left:.5rem; font-size:.85rem; color: var(--text-muted); min-width:120px; gap:.15rem; line-height:1.2; }
 .message-input__mic-status--active{ color: var(--accent); }
 .message-input__mic-error{ color:#f87171; }
+
+/* Safe areas (iOS notch / Dynamic Island / home indicator) */
+.settings-fab {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  z-index: 1001;
+}
+.auth-gate {
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}

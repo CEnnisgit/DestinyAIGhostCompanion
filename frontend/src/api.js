@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+import { SecureStorage } from '@aparajita/capacitor-secure-storage';
 import axios from 'axios';
 import { API_BASE_URL } from './config';
 let secureSecrets = {};
@@ -14,7 +16,9 @@ export function credentialHeaders() {
 export const client = axios.create({ baseURL: API_BASE_URL, timeout: 60000, withCredentials: true });
 client.interceptors.request.use(async config => {
   if (!['/config', '/local/secrets'].includes(config.url)) {
-    if (credentialLoad) await credentialLoad.catch(() => {});
+    if (credentialLoad) await credentialLoad.catch(error => {
+      if (Capacitor.isNativePlatform()) throw error;
+    });
     Object.assign(config.headers, credentialHeaders());
   }
   return config;
@@ -28,6 +32,18 @@ export function loadCredentialStorage() {
   return credentialLoad;
 }
 async function initializeCredentialStorage() {
+  if (Capacitor.isNativePlatform()) {
+    const old = settings();
+    const migrated = {};
+    for (const field of ['key', 'bungieKey']) {
+      migrated[field] = (await SecureStorage.get(field)) ?? old[field] ?? '';
+      await SecureStorage.set(field, migrated[field], false, false);
+    }
+    setSecureSecrets(migrated);
+    delete old.key; delete old.bungieKey;
+    localStorage.setItem('ghost-settings', JSON.stringify(old));
+    return true;
+  }
   const {data} = await client.get('/config');
   if (data.mode === 'desktop' && data.keyring_available) {
     const {data: stored} = await client.get('/local/secrets');
@@ -44,7 +60,8 @@ async function initializeCredentialStorage() {
 
 export function saveCredential(field, value) {
   credentialWrites = credentialWrites.catch(() => {}).then(async () => {
-    await client.put('/local/secrets', {[field]: value});
+    if (Capacitor.isNativePlatform()) await SecureStorage.set(field, value, false, false);
+    else await client.put('/local/secrets', {[field]: value});
     secureSecrets = {...secureSecrets, [field]: value};
   });
   return credentialWrites;

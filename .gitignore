@@ -54,3 +54,11 @@ Ghost-Testing/
 # Browser test artifacts
 frontend/test-results/
 frontend/playwright-report/
+
+# Capacitor native build outputs
+frontend/ios/**/Pods/
+frontend/ios/**/DerivedData/
+frontend/ios/**/xcuserdata/
+frontend/ios/App/App/public/
+frontend/ios/App/App/capacitor.config.json
+frontend/ios/App/CapApp-SPM/.build/

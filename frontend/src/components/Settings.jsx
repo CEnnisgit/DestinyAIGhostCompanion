@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import React, { useState, useEffect } from 'react';
 import { client, settings, loadCredentialStorage, saveCredential, waitCredentialWrites } from '../api';
 export default function Settings({ onClose }) {
@@ -5,7 +6,7 @@ export default function Settings({ onClose }) {
   const [result, setResult] = useState('');
   const [secure, setSecure] = useState(false);
   const [ready, setReady] = useState(false);
-  useEffect(() => { loadCredentialStorage().then(ok => { setSecure(ok); setValue(settings()); }).catch(() => setResult('OS keyring unavailable; browser storage is in use.')).finally(() => setReady(true)); }, []);
+  useEffect(() => { loadCredentialStorage().then(ok => { setSecure(ok); setValue(settings()); }).then(() => setReady(true)).catch(() => { setResult('Secure storage unavailable. Please retry.'); setReady(!Capacitor.isNativePlatform()); }); }, []);
   const update = async (field, v) => {
     const next = {...value, [field]: v}; setValue(next);
     const stored = {...next};
