@@ -1,6 +1,48 @@
 # Ghost-Companion
 The AI Ghost Companion is a minimalist chat-based assistant for Destiny 2. It combines the Bungie.net API with an AI language model to answer questions in real time about quests, activities, vendors, lore, and even manage your Guardian’s gear—all through a simple conversational interface.
 
+## Installation
+
+Use Python 3.11 and Node.js 20. Install the API in a virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+uvicorn server:app --reload
+```
+
+Fill in the local `.env` with your provider credentials. Desktop and voice
+features use `requirements-desktop.txt`. Fine-tuning and local model inference
+use `requirements-finetune.txt`, including accelerate and bitsandbytes for
+8-bit loading and automatic device placement; compatible GPU drivers and model
+access are required. Dataset generation uses only the standard library.
+
+The React 18 frontend uses Vite:
+
+```bash
+cd frontend
+npm ci
+cp .env.example .env
+npm run dev
+```
+
+Development runs on port 3000; `npm start` is an alias. Set `VITE_API_URL` in
+`frontend/.env` to override `http://127.0.0.1:8000`. This build-time value is
+shared by all API calls, including speech and streaming chat. No proxy is needed.
+`npm run build` outputs `frontend/build`, as expected by the backend and both
+PyInstaller specs. `npm run preview` previews the production build.
+
+Install developer dependencies and run checks with:
+
+```bash
+python -m pip install -r requirements-dev.txt
+env -u BUNGIE_API_KEY -u XAI_API_KEY python -m pytest -q tests
+pip-audit -r requirements.txt
+(cd frontend && npm audit --omit=dev --audit-level=high && npm run build)
+```
+
 ## Quick Start
 1. Launch both the FastAPI backend and the React frontend with the convenience script:
    ```bash
@@ -24,7 +66,7 @@ The root endpoint (`GET /`) returns usage instructions once the API is running.
 Execute the backend test suite with:
 
 ```bash
-pytest
+python -m pytest -q tests
 ```
 
 **Note:** Set the `BUNGIE_API_KEY` environment variable before running the examples below.
@@ -45,7 +87,7 @@ if input().strip().lower() == "yes":
 Run the standalone desktop app with real-time voice in Python:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-desktop.txt
 python run_desktop.py
 ```
 
@@ -97,9 +139,9 @@ Enterprise polish checklist:
 
 Troubleshooting environment (PySide6):
 - Ensure you install packages into the same interpreter you run:
-  - `python -m pip install -r requirements.txt`
+  - `python -m pip install -r requirements-desktop.txt`
   - `python -c "import sys; print(sys.executable); import PySide6; print(PySide6.__file__)"`
-- If multiple Pythons are present, use the launcher: `py -3.12 -m pip install -r requirements.txt` and `py -3.12 run_desktop.py`.
+- If multiple Pythons are present, use the launcher: `py -3.12 -m pip install -r requirements-desktop.txt` and `py -3.12 run_desktop.py`.
 
 ## Ollama Setup
 

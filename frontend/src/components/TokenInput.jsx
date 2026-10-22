@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+import { API_BASE_URL } from '../config';
 const client = axios.create({ baseURL: API_BASE_URL, timeout: 15000 });
 
 const TokenInput = ({ token, onTokenChange }) => {

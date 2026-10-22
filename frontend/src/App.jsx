@@ -25,7 +25,7 @@ import TopBar from './components/TopBar';
 import Sidebar from './components/Sidebar';
 import './App.css';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+import { API_BASE_URL } from './config';
 
 const client = axios.create({
   baseURL: API_BASE_URL,

@@ -7,6 +7,7 @@ required for the unit tests in this kata.  It allows registering expected
 
 from __future__ import annotations
 
+import json as _json
 from dataclasses import dataclass
 from functools import wraps
 from types import SimpleNamespace
@@ -43,7 +44,14 @@ class _Responses:
                     self.calls.append((entry.method, url))
                     if isinstance(entry.body, Exception):
                         raise entry.body
-                    return SimpleNamespace(status_code=entry.status, json=lambda: entry.json)
+                    body = entry.body
+                    if isinstance(body, bytes):
+                        text = body.decode("utf-8")
+                    elif body is not None:
+                        text = str(body)
+                    else:
+                        text = _json.dumps(entry.json) if entry.json is not None else ""
+                    return SimpleNamespace(status_code=entry.status, json=lambda: entry.json, text=text)
             raise requests.RequestException(f"No response mocked for {url}")
 
         requests.post = _mock_post

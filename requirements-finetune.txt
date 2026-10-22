@@ -1,0 +1,8 @@
+-r requirements.txt
+torch
+transformers
+peft
+datasets
+# Required for automatic device placement and 8-bit model loading.
+accelerate
+bitsandbytes

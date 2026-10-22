@@ -57,7 +57,7 @@ def _ensure_module(mod: str, pip_name: str | None = None) -> bool:
 
 def _bootstrap() -> None:
     repo_root = Path(__file__).resolve().parent
-    req = repo_root / "requirements.txt"
+    req = repo_root / "requirements-desktop.txt"
 
     # Ensure core GUI dependency first; if missing, install full requirements.
     try:
@@ -67,7 +67,7 @@ def _bootstrap() -> None:
             if not _pip_install_requirements(req):
                 _log("Continuing without full requirements; attempting minimal installs")
         else:
-            _log("requirements.txt not found; attempting minimal installs")
+            _log("requirements-desktop.txt not found; attempting minimal installs")
 
     # Minimal guarantees for desktop run
     _ensure_module("PySide6")

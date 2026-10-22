@@ -23,6 +23,13 @@ from . import lore as lore_search
 import requests as _requests
 
 
+class BungieConfigError(RuntimeError):
+    """Raised when a Bungie operation requires an unconfigured API key."""
+
+    def __init__(self) -> None:
+        super().__init__("Bungie API key not configured (set BUNGIE_API_KEY)")
+
+
 class GhostAssistant:
     """Orchestrates requests between Bungie and Ollama.
 
@@ -52,16 +59,11 @@ class GhostAssistant:
             If ``None``, the key is read from the ``BUNGIE_API_KEY`` environment
             variable.
         """
-        if bungie_client is None:
-            key = api_key or os.getenv("BUNGIE_API_KEY", "")
-            bungie_client = BungieClient(key)
-        self.bungie = bungie_client
-        # Store current tokens for handler methods (set from auth or per-request)
-        self._current_tokens: dict | None = None
-        if auth.STORED_TOKENS:
-            # Apply any tokens loaded at import time and keep them available
-            self.bungie.authenticate_user(auth.STORED_TOKENS)
-            self._current_tokens = auth.STORED_TOKENS
+        self._bungie = bungie_client
+        self._api_key = api_key
+        self._current_tokens: dict | None = auth.STORED_TOKENS or None
+        if bungie_client is not None and self._current_tokens:
+            bungie_client.authenticate_user(self._current_tokens)
         # Defer model client instantiation until used
         self._clients: dict[str, Any] = {}
         if grok_client is not None:
@@ -92,6 +94,19 @@ class GhostAssistant:
             "ace spades": "ace of spades",
             "sun shot": "sunshot",
         }
+
+    @property
+    def bungie(self) -> BungieClient:
+        """Construct the client only when a Bungie operation needs it."""
+        if self._bungie is None:
+            key = self._api_key or os.getenv("BUNGIE_API_KEY", "")
+            if not key.strip():
+                raise BungieConfigError()
+            client = BungieClient(key)
+            if self._current_tokens:
+                client.authenticate_user(self._current_tokens)
+            self._bungie = client
+        return self._bungie
 
     def _get_client(self, provider: str) -> Any:
         """Return a model client keyed by provider string.
@@ -438,7 +453,6 @@ class GhostAssistant:
                 pass
 
         model_provider = (provider or self._default_provider()).lower()
-        client = self._get_client(model_provider)
 
         # Explicit Bungie API call support before other handlers
         # Examples:
@@ -449,10 +463,16 @@ class GhostAssistant:
             _maybe = self._maybe_dispatch_bungie_call(message)
             if _maybe is not None:
                 return _maybe
+        except BungieConfigError:
+            raise
         except Exception:
             pass
 
         def send_with_system(system_prompt: str, user_prompt: str) -> str:
+            client = self._get_client(model_provider)
+            # Injected generate-only clients need no system-message adapter.
+            if not callable(getattr(type(client), "generate_with_system", None)):
+                return client.generate(user_prompt)
             try:
                 if isinstance(client, OllamaClient):
                     combined = f"System: {system_prompt}\nUser: {user_prompt}\nAssistant:"
@@ -471,7 +491,7 @@ class GhostAssistant:
 
         # Simple greeting
         if re.match(r"^\s*(hi|hello|hey|hiya|yo|greetings)\b", message, re.IGNORECASE):
-            return "Guardian, hello. How can I assist?"
+            return self._get_client(model_provider).generate(message)
 
         # Quick season response
         if "season" in message.lower():

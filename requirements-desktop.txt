@@ -1,0 +1,8 @@
+-r requirements.txt
+PySide6
+sounddevice
+numpy
+pyttsx3
+playsound==1.2.2
+faster-whisper
+soundfile

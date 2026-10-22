@@ -24,6 +24,13 @@ class BungieAPIError(Exception):
     """Raised when the Bungie API returns an error."""
 
 
+def _components_str(components: Any) -> str:
+    """Normalize a components spec (``"100,200"``, ``100`` or ``[100, 200]``)."""
+    if isinstance(components, (str, int)):
+        return str(components)
+    return ",".join(str(c) for c in components)
+
+
 class BungieClient:
     """Client for performing requests against the Bungie API.
 
@@ -834,7 +841,7 @@ class BungieClient:
         self,
         membership_type: int,
         destiny_membership_id: str,
-        components: list[int] | None = None
+        components: list[int] | str | None = None
     ) -> Dict[str, Any]:
         """Get Destiny 2 profile information (cached briefly).
 
@@ -844,7 +851,7 @@ class BungieClient:
         """
         if components is None:
             components = [100, 200, 201, 205, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 400, 401, 402, 500, 600, 700, 800, 900, 1000, 1100]
-        components_str = ",".join(str(c) for c in components)
+        components_str = _components_str(components)
         return self._get_profile_cached(membership_type, destiny_membership_id, components_str)
 
     def get_character(
@@ -852,7 +859,7 @@ class BungieClient:
         membership_type: int,
         destiny_membership_id: str,
         character_id: str,
-        components: list[int] | None = None
+        components: list[int] | str | None = None
     ) -> Dict[str, Any]:
         """Get Destiny 2 character information.
 
@@ -861,7 +868,7 @@ class BungieClient:
         """
         if components is None:
             components = [100, 200, 201, 205, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 400, 401, 402]
-        components_str = ",".join(str(c) for c in components)
+        components_str = _components_str(components)
         return self._get_character(membership_type, destiny_membership_id, character_id, components_str)
 
     def transfer_item(self, *args, **kwargs) -> Dict[str, Any]:
@@ -919,46 +926,12 @@ class BungieClient:
         }
         return self._post(path, payload)
 
-    def equip_item(
-        self,
-        item_id: str,
-        character_id: str,
-        membership_type: int
-    ) -> Dict[str, Any]:
-        """Equip an item on a character."""
-        path = "/Destiny2/Actions/Items/EquipItem/"
-        payload = {
-            "itemId": item_id,
-            "characterId": character_id,
-            "membershipType": membership_type
-        }
-        return self._post(path, payload)
-
-    def pull_from_postmaster(
-        self,
-        item_reference_hash: int,
-        stack_size: int,
-        item_id: str,
-        character_id: str,
-        membership_type: int
-    ) -> Dict[str, Any]:
-        """Pull an item from the postmaster."""
-        path = "/Destiny2/Actions/Items/PullFromPostmaster/"
-        payload = {
-            "itemReferenceHash": item_reference_hash,
-            "stackSize": stack_size,
-            "itemId": item_id,
-            "characterId": character_id,
-            "membershipType": membership_type
-        }
-        return self._post(path, payload)
-
     def get_vendors(
         self,
         membership_type: int,
         destiny_membership_id: str,
         character_id: str,
-        components: list[int] | None = None
+        components: list[int] | str | None = None
     ) -> Dict[str, Any]:
         """Get vendor information for a character (wrapper).
 
@@ -966,8 +939,18 @@ class BungieClient:
         """
         if components is None:
             components = [100, 101, 102, 103, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320]
-        components_str = ",".join(str(c) for c in components)
+        components_str = _components_str(components)
         return self._get_character_vendors(membership_type, destiny_membership_id, character_id, components_str)
+
+    def get_character_vendors(
+        self,
+        membership_type: int,
+        destiny_membership_id: str,
+        character_id: str,
+        components: list[int] | str | None = None,
+    ) -> Dict[str, Any]:
+        """Alias of :meth:`get_vendors`."""
+        return self.get_vendors(membership_type, destiny_membership_id, character_id, components)
 
     def get_vendor(
         self,
@@ -975,12 +958,12 @@ class BungieClient:
         destiny_membership_id: str,
         character_id: str,
         vendor_hash: int,
-        components: list[int] | None = None
+        components: list[int] | str | None = None
     ) -> Dict[str, Any]:
         """Get specific vendor information (wrapper)."""
         if components is None:
             components = [100, 101, 102, 103, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320]
-        components_str = ",".join(str(c) for c in components)
+        components_str = _components_str(components)
         return self._get_vendor(membership_type, destiny_membership_id, character_id, str(vendor_hash), components_str)
 
     def get_historical_stats_for_account(
@@ -1070,14 +1053,14 @@ class BungieClient:
         membership_type: int,
         destiny_membership_id: str,
         item_instance_id: str,
-        components: list[int] | None = None
+        components: list[int] | str | None = None
     ) -> Dict[str, Any]:
         """Get detailed information about a specific item (wrapper)."""
         if components is None:
             # Use a broad default, but allow callers to be explicit when they know
             # exactly which components they need.
             components = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320]
-        components_str = ",".join(str(c) for c in components)
+        components_str = _components_str(components)
         return self._get_item(membership_type, destiny_membership_id, item_instance_id, components_str)
 
     def get_public_milestone_content(self, milestone_hash: int) -> Dict[str, Any]:
@@ -1090,9 +1073,12 @@ class BungieClient:
         membership_type: int,
         destiny_membership_id: str,
         character_id: str,
-        collectible_presentation_node_hash: int
+        collectible_presentation_node_hash: int,
+        components: list[int] | str | None = None,
     ) -> Dict[str, Any]:
         """Get collectibles for a character (wrapper)."""
+        if components is not None:
+            return self._get_collectibles(membership_type, destiny_membership_id, character_id, str(collectible_presentation_node_hash), _components_str(components))
         # The earlier canonical implementation expects components as a string; for
         # this variant, the default in earlier method is already embedded, so we
         # call it with an empty components string to preserve behavior.

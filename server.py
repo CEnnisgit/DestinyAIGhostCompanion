@@ -42,7 +42,7 @@ from server_db import (
 )
 from server_auth import create_jwt, get_user_from_token
 from ghost.auth import exchange_code_for_token  # type: ignore
-from ghost.assistant import GhostAssistant  # type: ignore
+from ghost.assistant import BungieConfigError, GhostAssistant  # type: ignore
 from ghost import personalities as _personas  # type: ignore
 from ghost.voice import make_tts_provider, voice_id_for_persona  # type: ignore
 from ghost.voice import make_stt_provider  # type: ignore
@@ -83,6 +83,12 @@ if FRONTEND_BUILD_DIR is None:
     FRONTEND_BUILD_DIR = REPO_ROOT / "frontend" / "build"
 
 app = FastAPI()
+
+
+@app.exception_handler(BungieConfigError)
+async def bungie_config_error_handler(request: Request, exc: BungieConfigError) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
 
 # Logging
 LOG_DIR = REPO_ROOT / "logs"
@@ -452,7 +458,7 @@ def user_oauth_callback(code: str | None = None, state: str | None = None) -> HT
 
 if not SERVE_UI:
     @app.get("/")
-    def root_fallback() -> dict[str, str]:
+    def root() -> dict[str, str]:
         return {"detail": "Send POST /chat with {'message': ...}"}
 
 
@@ -549,17 +555,20 @@ def api_chat_stream(
     # Persist user message
     append_message(conv_id, f"msg-{__import__('uuid').uuid4().hex}", "user", message)
 
+    # Resolve before sending headers so configuration errors become HTTP errors.
+    try:
+        tokens = get_bungie_tokens(uid) or None
+        reply = assistant.chat(message, provider=provider_key or provider, tokens=tokens, persona=persona)
+    except BungieConfigError:
+        raise
+    except Exception as e:
+        logger.exception("Assistant failure; replying with fallback: %s", e)
+        reply = (
+            "Hi Guardian. The model provider isn't configured (e.g., OLLAMA_MODEL). "
+            "I can still chat lightly."
+        )
+
     def _gen():
-        # Try real assistant; if model not configured, fall back to a simple reply.
-        try:
-            tokens = get_bungie_tokens(uid) or None
-            reply = assistant.chat(message, provider=provider_key or provider, tokens=tokens, persona=persona)
-        except Exception as e:  # model missing, etc.
-            logger.exception("Assistant failure; replying with fallback: %s", e)
-            reply = (
-                "Hi Guardian. The model provider isn't configured (e.g., OLLAMA_MODEL). "
-                "I can still chat lightly."
-            )
         # Stream in chunks
         chunk = 200
         sent = 0
