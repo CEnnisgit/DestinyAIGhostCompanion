@@ -529,6 +529,8 @@ body {
 @media (max-width: 768px) {
   .app {
     padding: 1rem;
+    padding-top: calc(1rem + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
     grid-template-columns: 1fr;
   }
 
