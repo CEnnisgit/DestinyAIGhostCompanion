@@ -160,62 +160,17 @@ ollama pull llama2
 ollama serve
 ```
 
-## OAuth Setup
-1. [Register a Bungie application](https://www.bungie.net/en/Application) and note your **client ID** and **client secret**.
-2. Set the credentials as environment variables (`BUNGIE_CLIENT_ID` and `BUNGIE_CLIENT_SECRET`).
-3. Generate an authorization link and exchange the returned code for tokens:
-```python
-import os
-from ghost import auth
+## AI and Bungie settings
 
-url = auth.get_authorization_url(
-    os.environ["BUNGIE_CLIENT_ID"], scopes=["ReadDestinyInventoryAndVault"]
-)
-print("Visit:", url)
-code = input("Paste authorization code: ")
-tokens = auth.exchange_code_for_token(
-    os.environ["BUNGIE_CLIENT_ID"], os.environ["BUNGIE_CLIENT_SECRET"], code
-)
-auth.save_tokens(tokens)  # encrypted storage
-```
-4. Provide the tokens to `BungieClient` or `GhostAssistant`:
-```python
-from ghost.bungie import BungieClient
+Open **Settings** in the main UI. Select xAI, OpenAI, Anthropic, an OpenAI-compatible endpoint, or Ollama/local; enter the model, optional HTTP/HTTPS base URL, and API key. Compatible endpoints require a base URL (including any `/v1` prefix) and model. Use **Test connection** to make a small request.
 
-client = BungieClient(os.environ["BUNGIE_API_KEY"])
-client.authenticate_user(auth.load_tokens())
-```
+Settings live only in this device's browser localStorage and are sent to the configured API server with each request. Use a trusted server and HTTPS. AI keys are request-scoped and never written to the server database, disk, or environment. `/chat`, `/chat/stream`, and `/ai/test` use `X-AI-Provider`, `X-AI-Model`, `X-AI-Key`, and optional `X-AI-Base-URL`. The stream route sends buffered text chunks; upstream streaming is optional and currently unused.
 
-Tokens are stored encrypted on disk at `~/.ghost_tokens` (or the path
-specified by `GHOST_TOKEN_FILE`). The encryption key is derived from the
-`GHOST_TOKEN_KEY` environment variable.
+Shared `XAI_API_KEY` is ignored unless `GHOST_ALLOW_ENV_AI_KEY=1` explicitly enables the development fallback. No opt-in flags are enabled by default. Copy `.env.example` to your own untracked `.env` and fill only the values you need.
 
-## Environment Variables
-Environment variables are loaded automatically from a `.env` file via
-[`python-dotenv`](https://github.com/theskumar/python-dotenv). Fill in the `.env` file with your own values for the variables below,
-or export them directly. The Bungie OAuth flow requires the redirect URI to match the one you configure in the Bungie developer portal.
+Bungie uses a public client with PKCE/state by default, without a secret. Settings also accepts the device Bungie API key and client ID. Hosted servers can supply `BUNGIE_API_KEY` and `BUNGIE_CLIENT_ID`. Confidential token proxy mode requires both `GHOST_BUNGIE_TOKEN_PROXY=1` and a server-only `BUNGIE_CLIENT_SECRET`.
 
-```dotenv
-# .env
-BUNGIE_API_KEY=your_api_key
-BUNGIE_REDIRECT_URI=http://localhost:8000/oauth/callback
-```
-
-```bash
-export BUNGIE_API_KEY="your_api_key"
-export BUNGIE_CLIENT_ID="your_oauth_client_id"
-export BUNGIE_CLIENT_SECRET="your_oauth_client_secret"
-export BUNGIE_REDIRECT_URI="http://localhost:8000/oauth/callback"
-export BUNGIE_MANIFEST_TTL="3600"     # optional cache TTL in seconds
-export BUNGIE_PROFILE_TTL="60"        # optional cache TTL in seconds
-export BUNGIE_APP_NAME="Ghost-Companion"
-export BUNGIE_APP_VERSION="1.0"
-export BUNGIE_APP_URL="https://example.com"
-export OLLAMA_MODEL="llama2"
-export OLLAMA_HOST="http://localhost:11434"
-export GHOST_TOKEN_KEY="change_me"       # key for encrypted token storage
-# export GHOST_TOKEN_FILE="/tmp/tokens"   # optional custom path
-```
+See [Bungie registration, permissions, redirect URIs, and deployment limitations](docs/BUNGIE_SETUP.md), including the need to verify Bungie's PKCE enforcement before release.
 
 ## Bungie API Direct Calls
 

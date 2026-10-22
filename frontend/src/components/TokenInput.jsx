@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import { client } from '../api';
 
 import { API_BASE_URL } from '../config';
-const client = axios.create({ baseURL: API_BASE_URL, timeout: 15000 });
+
 
 const TokenInput = ({ token, onTokenChange }) => {
   const [localToken, setLocalToken] = useState(token ?? '');

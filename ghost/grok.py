@@ -16,7 +16,7 @@ class GrokClient:
     """Client for xAI's Grok API."""
 
     def __init__(self, api_key: str | None = None) -> None:
-        self.api_key = api_key or os.getenv("XAI_API_KEY", "")
+        self.api_key = api_key or (os.getenv("XAI_API_KEY", "") if os.getenv("GHOST_ALLOW_ENV_AI_KEY") == "1" else "")
         if not self.api_key:
             raise GrokError("xAI API key is not set")
         self.base_url = "https://api.x.ai/v1"
@@ -53,7 +53,7 @@ class GrokClient:
         )
 
         if response.status_code != 200:
-            raise GrokError(f"Grok API error: {response.status_code} - {response.text}")
+            raise GrokError(f"Grok API error: {response.status_code}")
 
         result = response.json()
         return result["choices"][0]["message"]["content"]
@@ -96,7 +96,7 @@ class GrokClient:
         )
 
         if response.status_code != 200:
-            raise GrokError(f"Grok API error: {response.status_code} - {response.text}")
+            raise GrokError(f"Grok API error: {response.status_code}")
 
         result = response.json()
         return result["choices"][0]["message"]["content"]

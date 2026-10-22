@@ -82,7 +82,21 @@ if FRONTEND_BUILD_DIR is None:
     # Fall back to the default dev path; mount is gated by SERVE_UI below
     FRONTEND_BUILD_DIR = REPO_ROOT / "frontend" / "build"
 
+from ghost.providers import from_headers, ProviderError, RedactionFilter, request_secrets
+from ghost.auth import generate_pkce, public_exchange, _safe_token_request
+import secrets
+from urllib.parse import urlencode
+
 app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
+UI_ORIGINS = [v.strip() for v in (os.getenv("GHOST_UI_ORIGINS") or "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:5173,http://localhost:5173").split(",") if v.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=UI_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Conversation-Id"])
+
+
+@app.exception_handler(ProviderError)
+async def provider_error_handler(request, exc):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
 
 
 @app.exception_handler(BungieConfigError)
@@ -97,6 +111,8 @@ log_file = LOG_DIR / "server.log"
 _file_handler = RotatingFileHandler(str(log_file), maxBytes=1_000_000, backupCount=3)
 _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler, logging.StreamHandler()])
+for handler in logging.getLogger().handlers:
+    handler.addFilter(RedactionFilter())
 logger = logging.getLogger("ghost")
 logger.info("Server started; logging to %s", log_file)
 
@@ -177,10 +193,15 @@ assistant = GhostAssistant()
 
 @app.middleware("http")
 async def log_requests(request, call_next):
-    logger.info(f"Request: {request.method} {request.url}")
-    response = await call_next(request)
-    logger.info(f"Response: {response.status_code}")
-    return response
+    marker = request_secrets.set(tuple(v for v in (request.headers.get("x-ai-key"), request.headers.get("x-bungie-api-key"), os.getenv("BUNGIE_CLIENT_SECRET")) if v))
+    try:
+        logger.info("Request: %s %s", request.method, request.url.path)
+        response = await call_next(request)
+        logger.info("Response: %s", response.status_code)
+        return response
+    finally:
+        request_secrets.reset(marker)
+
 
 
 # Decide whether to serve the built UI (mounted at end)
@@ -209,7 +230,7 @@ def health() -> dict[str, object]:
 
 
 @app.get("/auth/status")
-def auth_status(authorization: str | None = Header(None)) -> dict[str, object]:
+def auth_status(authorization: str | None = Header(None), x_bungie_api_key: str | None = Header(None)) -> dict[str, object]:
     user = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1]
@@ -217,8 +238,8 @@ def auth_status(authorization: str | None = Header(None)) -> dict[str, object]:
             user = get_user_from_token(token)
         except Exception:
             user = None
-    api_key = os.getenv("BUNGIE_API_KEY", "")
-    masked = (api_key[:4] + "*" * max(0, len(api_key) - 8) + api_key[-4:]) if api_key else ""
+    api_key = os.getenv("BUNGIE_API_KEY") or x_bungie_api_key or ""
+    masked = "configured" if api_key else ""
     linked = False
     if user:
         try:
@@ -242,31 +263,8 @@ class KeyPayload(BaseModel):
 
 
 @app.post("/auth/key")
-def set_api_key(payload: KeyPayload) -> dict[str, object]:
-    key = (payload.api_key or "").strip()
-    if not key:
-        raise HTTPException(status_code=400, detail="Missing api_key")
-    os.environ["BUNGIE_API_KEY"] = key
-    # Best-effort update of .env if present
-    try:
-        env_path = REPO_ROOT / ".env"
-        if env_path.exists():
-            # naive replacement or append
-            text = env_path.read_text(encoding="utf-8")
-            lines = []
-            found = False
-            for line in text.splitlines():
-                if line.startswith("BUNGIE_API_KEY="):
-                    lines.append(f"BUNGIE_API_KEY={key}")
-                    found = True
-                else:
-                    lines.append(line)
-            if not found:
-                lines.append(f"BUNGIE_API_KEY={key}")
-            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except Exception:
-        pass
-    return {"ok": True}
+def set_api_key(payload: KeyPayload):
+    raise HTTPException(410, "Use device Settings and X-Bungie-API-Key instead")
 
 
 def _callback_url(request: Request, force_http: bool | None = None) -> str:
@@ -291,163 +289,91 @@ def _callback_url(request: Request, force_http: bool | None = None) -> str:
     return url
 
 
+# Short-lived, one-use OAuth attempts contain no API keys.
+_oauth_attempts = {}
+
 @app.get("/oauth/authorize")
-def oauth_authorize(request: Request) -> dict[str, str]:
-    client_id = os.getenv("BUNGIE_CLIENT_ID")
-    if not client_id:
-        raise HTTPException(status_code=404, detail="OAuth not configured")
-    # Coerce to http unless local TLS is configured via env
-    redirect_uri = _callback_url(request, force_http=None)
-    base = "https://www.bungie.net/en/OAuth/Authorize"
-    url = f"{base}?client_id={client_id}&response_type=code&redirect_uri={redirect_uri}"
-    return {"authorization_url": url, "redirect_uri": redirect_uri}
-
-
-# Aliases for legacy paths used by the web UI
 @app.get("/user/oauth/authorize")
-def user_oauth_authorize(request: Request) -> dict[str, str]:
-    return oauth_authorize(request)
-
+def oauth_authorize(request: Request):
+    cid = os.getenv("BUNGIE_CLIENT_ID") or request.headers.get("x-bungie-client-id")
+    if not cid:
+        raise HTTPException(404, "OAuth client ID not configured")
+    verifier, challenge = generate_pkce()
+    state = secrets.token_urlsafe(32)
+    now = _time.time()
+    for old in list(_oauth_attempts):
+        if _oauth_attempts[old][3] < now:
+            del _oauth_attempts[old]
+    redirect = os.getenv("BUNGIE_REDIRECT_URI") or str(request.url_for("oauth_callback"))
+    origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
+    if origin not in UI_ORIGINS and origin != str(request.base_url).rstrip("/"):
+        raise HTTPException(400, "Unrecognized UI origin")
+    _oauth_attempts[state] = (verifier, cid, redirect, now + 600, origin)
+    url = "https://www.bungie.net/en/OAuth/Authorize?" + urlencode(dict(client_id=cid, response_type="code", redirect_uri=redirect, state=state, code_challenge=challenge, code_challenge_method="S256"))
+    response = JSONResponse({"authorization_url": url, "redirect_uri": redirect})
+    response.set_cookie("ghost_oauth_state", state, httponly=True, secure=request.url.scheme == "https", samesite="lax", max_age=600)
+    return response
 
 @app.get("/oauth/callback")
-def oauth_callback(code: str | None = None, state: str | None = None) -> HTMLResponse:
-    """OAuth redirect landing page.
+def oauth_callback(code: str | None = None, state: str | None = None):
+    # Values are escaped as JSON, including '<' to prevent script injection.
+    payload = json_dumps(dict(type="bungie_oauth", code=code or "", state=state or "")).replace("<", "\\u003c")
+    attempt = _oauth_attempts.get(state)
+    origin = json_dumps(attempt[4] if attempt else "")
+    return HTMLResponse("<!doctype html><title>Ghost Companion</title><script>const p=" + payload + ";if(window.opener){window.opener.postMessage(p," + origin + ");window.addEventListener('message',function(e){if(e.source===window.opener && e.origin===" + origin + " && e.data.type==='oauth_complete'){window.close();}});}else{document.body.textContent='Return to Ghost Companion and try signing in again.'}</script>")
 
-    - If opened as a popup (window.opener exists): postMessage the code and close.
-    - If opened in the main window (no opener): directly exchange the code for a
-      token via POST /oauth/callback, store it in localStorage, and redirect to '/'.
-    """
-    payload = {
-        "type": "bungie_oauth",
-        "ok": bool(code),
-        "code": code or "",
-        "state": state or "",
-    }
-    script = (
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Auth</title></head><body>"
-        "<script>\n"
-        "(function(){\n"
-        "  var p = %s;\n"
-        "  function closeSoon(){ try{ window.close(); }catch(_){} setTimeout(function(){ try{ window.close(); }catch(_){} }, 300); }\n"
-        "  if (window.opener) {\n"
-        "    try { window.opener.postMessage(p, '*'); } catch(e){}\n"
-        "    if (p && p.code) {\n"
-        "      try {\n"
-        "        fetch('/oauth/callback', {method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({code: p.code})})\n"
-        "          .then(function(r){ return r.json(); })\n"
-        "          .then(function(data){ if (data && data.token) { try { localStorage.setItem('ghost-companion-token', JSON.stringify(data.token)); } catch(_){} } try { window.opener.postMessage({type:'oauth_complete'}, '*'); } catch(_){} closeSoon(); });\n"
-        "      } catch (e) { closeSoon(); }\n"
-        "      return;\n"
-        "    }\n"
-        "    closeSoon();\n"
-        "    return;\n"
-        "  }\n"
-        "  // Fallback when this page took over the main window.\n"
-        "  if (p && p.code) {\n"
-        "    try {\n"
-        "      fetch('/oauth/callback', {method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({code: p.code})})\n"
-        "        .then(function(r){ return r.json(); })\n"
-        "        .then(function(data){\n"
-        "          if (data && data.token) {\n"
-        "            try { localStorage.setItem('ghost-companion-token', JSON.stringify(data.token)); } catch(_){}\n"
-        "            location.replace('/');\n"
-        "          } else { document.body.innerHTML = '<p>Authentication failed. Please close this window.</p>'; }\n"
-        "        })\n"
-        "        .catch(function(){ document.body.innerHTML = '<p>Authentication failed. Please close this window.</p>'; });\n"
-        "    } catch (e) { document.body.innerHTML = '<p>Authentication failed. Please close this window.</p>'; }\n"
-        "  } else {\n"
-        "    document.body.innerHTML = '<p>Missing authorization code. You can close this window.</p>';\n"
-        "  }\n"
-        "})();\n"
-        "</script>"
-        "<p>You can close this window.</p>"
-        "</body></html>"
-    ) % (json_dumps(payload))
-    return HTMLResponse(content=script, status_code=200)
+def _consume_oauth(request, payload):
+    state = str(payload.get("state") or "")
+    cookie = request.cookies.get("ghost_oauth_state", "")
+    if not state or not secrets.compare_digest(state, cookie):
+        raise HTTPException(400, "OAuth state mismatch")
+    attempt = _oauth_attempts.pop(state, None)
+    if not attempt or attempt[3] < _time.time():
+        raise HTTPException(400, "OAuth state expired or already used")
+    return attempt
 
+def _proxy_secret():
+    secret = os.getenv("BUNGIE_CLIENT_SECRET")
+    if os.getenv("GHOST_BUNGIE_TOKEN_PROXY") != "1" or not secret:
+        raise HTTPException(404, "Token proxy disabled")
+    return secret
 
 @app.post("/oauth/callback")
-def oauth_callback_post(payload: dict | None = None):
-    # Extract code
-    code = ""
+def oauth_callback_post(request: Request, payload: dict):
+    verifier, cid, redirect, expiry, _ = _consume_oauth(request, payload)
+    secret = _proxy_secret() if os.getenv("GHOST_BUNGIE_TOKEN_PROXY") == "1" else None
     try:
-        if isinstance(payload, dict):
-            code = str(payload.get("code") or "")
-    except Exception:
-        code = ""
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
-
-    # Ensure a local app user exists
+        tok = public_exchange(cid, str(payload.get("code") or ""), verifier, secret)
+    except ValueError:
+        raise HTTPException(400, "Bungie token exchange failed") from None
     email = "desktop@local"
     row = get_user_by_email(email)
     if not row:
-        try:
-            _uid = create_user(email, "local")
-            row = get_user_by_email(email)
-        except Exception:
-            row = get_user_by_email(email)
-    uid = int(row["id"]) if row else 1
+        create_user(email, "local")
+        row = get_user_by_email(email)
+    uid = int(row["id"])
+    upsert_bungie_tokens(uid, {"access_token": tok.get("access_token", ""), "refresh_token": tok.get("refresh_token", ""), "membership_id": tok.get("membership_id"), "membership_type": None, "access_token_expires": _time.time() + int(tok.get("expires_in", 0))})
+    return {"ok": True, "token": create_jwt(uid, email), "bungie_linked": True}
 
-    # Exchange the code for Bungie tokens
+@app.post("/oauth/token")
+def oauth_token(request: Request, payload: dict):
+    secret = _proxy_secret()
+    verifier, cid, _, _, _ = _consume_oauth(request, payload)
+    try:
+        return public_exchange(cid, str(payload.get("code") or ""), verifier, secret)
+    except ValueError:
+        raise HTTPException(400, "Bungie token exchange failed") from None
+
+@app.post("/oauth/refresh")
+def oauth_refresh(payload: dict):
+    secret = _proxy_secret()
     cid = os.getenv("BUNGIE_CLIENT_ID")
-    csecret = os.getenv("BUNGIE_CLIENT_SECRET")
-    if not cid or not csecret:
-        logger.warning("Bungie OAuth creds missing; issuing local token only")
-        token = create_jwt(uid, email)
-        return {"ok": True, "token": token, "bungie_linked": False}
-
+    if not cid:
+        raise HTTPException(503, "OAuth client ID not configured")
     try:
-        tok = exchange_code_for_token(cid, csecret, code)
-    except Exception as e:
-        logger.exception("OAuth token exchange failed: %s", e)
-        raise HTTPException(status_code=400, detail="Token exchange failed")
-
-    # Persist tokens
-    try:
-        access = str(tok.get("access_token") or "")
-        refresh = str(tok.get("refresh_token") or "")
-        membership_id = str(tok.get("membership_id") or "")
-        expires_in = int(tok.get("expires_in") or 0)
-        access_exp = __import__('time').time() + max(0, expires_in)
-        upsert_bungie_tokens(
-            uid,
-            {
-                "access_token": access,
-                "refresh_token": refresh,
-                "membership_id": membership_id,
-                "membership_type": None,
-                "access_token_expires": access_exp,
-            },
-        )
-        # Optionally resolve membership type
-        try:
-            api_key = os.getenv("BUNGIE_API_KEY", "")
-            if api_key and access:
-                from ghost.bungie import BungieClient  # type: ignore
-
-                bc = BungieClient(api_key, access_token=access)
-                mresp = bc.get_memberships_for_current_user()
-                dms = (mresp or {}).get("Response", {}).get("destinyMemberships", []) or []
-                if dms:
-                    m = dms[0]
-                    upsert_bungie_tokens(
-                        uid,
-                        {
-                            "access_token": access,
-                            "refresh_token": refresh,
-                            "membership_id": m.get("membershipId"),
-                            "membership_type": m.get("membershipType"),
-                            "access_token_expires": access_exp,
-                        },
-                    )
-        except Exception:
-            pass
-    except Exception:
-        logger.exception("Failed to persist Bungie tokens")
-
-    token = create_jwt(uid, email)
-    return {"ok": True, "token": token, "bungie_linked": True}
+        return _safe_token_request(dict(grant_type="refresh_token", client_id=cid, client_secret=secret, refresh_token=str(payload.get("refresh_token") or "")))
+    except ValueError:
+        raise HTTPException(400, "Bungie token exchange failed") from None
 
 
 # Legacy alias
@@ -547,7 +473,8 @@ def api_chat_stream(
     uid = int(user["id"])  # type: ignore[index]
     conv_id = session_id or f"conv-{__import__('uuid').uuid4().hex}"
     # If provider is Ollama and a model is provided, persist as "ollama:<model>"
-    provider_key = (provider or "").lower()
+    provider_key = request.headers.get("x-ai-provider", "ollama").lower()
+    model = request.headers.get("x-ai-model") or model
     if provider_key == "ollama" and model:
         provider_key = f"ollama:{model}"
     ensure_conversation(conv_id, uid, name="Chat", provider=provider_key or provider)
@@ -558,8 +485,11 @@ def api_chat_stream(
     # Resolve before sending headers so configuration errors become HTTP errors.
     try:
         tokens = get_bungie_tokens(uid) or None
-        reply = assistant.chat(message, provider=provider_key or provider, tokens=tokens, persona=persona)
-    except BungieConfigError:
+        local_assistant = GhostAssistant(api_key=os.getenv("BUNGIE_API_KEY") or request.headers.get("x-bungie-api-key"))
+        client = from_headers(request.headers)
+        local_assistant._clients["request"] = client
+        reply = local_assistant.chat(message, provider="request", tokens=tokens, persona=persona)
+    except (BungieConfigError, ProviderError):
         raise
     except Exception as e:
         logger.exception("Assistant failure; replying with fallback: %s", e)
@@ -601,6 +531,23 @@ def api_chat_stream(
 
     headers = {"X-Conversation-Id": conv_id}
     return StreamingResponse(_gen(), media_type="text/plain", headers=headers)
+
+
+@app.post("/ai/test")
+def ai_test(request: Request):
+    try:
+        from_headers(request.headers).chat([{"role": "user", "content": "Reply OK"}], max_tokens=8)
+        return {"ok": True}
+    except ProviderError as exc:
+        return {"ok": False, "error": str(exc)}
+
+@app.post("/chat")
+def api_chat(payload: ChatRequest, request: Request, authorization: str | None = Header(None)):
+    user = _require_user(authorization)
+    local = GhostAssistant(api_key=os.getenv("BUNGIE_API_KEY") or request.headers.get("x-bungie-api-key"))
+    local._clients["request"] = from_headers(request.headers)
+    reply = local.chat(payload.message, provider="request", tokens=get_bungie_tokens(int(user["id"])))
+    return {"reply": reply}
 
 
 @app.get("/models")
